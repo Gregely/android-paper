@@ -353,6 +353,23 @@
                 android:text="@string/refresh_on_change_hint" />
         </LinearLayout>
 
+        <LinearLayout style="@style/Card">
+
+            <TextView
+                style="@style/CardTitle"
+                android:text="@string/section_home" />
+
+            <Switch
+                android:id="@+id/home_switch"
+                style="@style/FeatureSwitch"
+                android:text="@string/home_screen" />
+
+            <TextView
+                style="@style/Hint"
+                android:layout_marginBottom="16dp"
+                android:text="@string/home_screen_hint" />
+        </LinearLayout>
+
         <Button
             android:id="@+id/preview_button"
             style="@android:style/Widget.Material.Button.Colored"

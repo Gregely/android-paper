@@ -118,13 +118,45 @@ same code over a `PixelCopy` snapshot of its own window.
   page in place of the stale frame, and does a full refresh once the rotation animation is
   done.
 
+## Home screen (optional launcher)
+
+`HomeActivity` is a minimal home screen that reads like a page of an e-reader: a white page
+and serif text in `#333333`, both tinted by the filter's warmth setting so it matches filtered
+screens. With filtering on, the filter discards colour and tints by brightness, so the
+pre-tint isn't applied twice. From top to bottom:
+
+- **Clock**, hours and minutes only, updated each minute (`ACTION_TIME_TICK`), in the
+  system's 12/24-hour style without AM/PM.
+- **Date**, with the day of the week.
+- A hairline, then **favourites**: up to five apps as text labels. Tap to open. Long-press
+  to change or remove the app; long-press (or tap) an empty `+` slot to add one. Saved
+  across restarts.
+- A hairline, then a **search field**, an underlined text field that filters the list as
+  you type. Prefix matches come first, then word starts, then matches anywhere; case and
+  accents are ignored. **Go** on the keyboard opens the first result. While a search is
+  typed, the clock and favourites step aside to give results the whole page.
+- The **app list**: every launchable app, alphabetical, names only. Tap to open.
+
+There's no wallpaper, widgets, dock, folders or icons. Home returns here (and resets the
+page). Back does nothing, apart from clearing a search. The status bar and notification shade
+work as usual. The list updates itself as apps are installed, updated or removed
+(`LauncherApps.Callback`).
+
+**Setting it as the launcher:** Settings → Home screen → **Use as home screen** asks the
+system to make PaperScreen the default home app (`RoleManager.ROLE_HOME`). The switch shows
+whether it currently is. Apps can't give up the role themselves, so turning the switch off
+opens Android's "Default home app" setting to pick another.
+
+Listing other apps needs no permission. The manifest's `<queries>` entry for launcher
+activities makes them visible (Android 11+ package visibility).
+
 ## Building
 
 Requirements: JDK 17+ and an Android SDK with platform 34.
 
 ```sh
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest    # EinkFilter, FrameDiff and WindowPlacement unit tests
+./gradlew testDebugUnitTest    # filter, diff, placement, search and favourites unit tests
 ```
 
 - `minSdk`/`targetSdk`/`compileSdk` 34, Gradle Kotlin DSL, AGP 8.10, Kotlin 2.1.

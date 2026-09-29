@@ -57,6 +57,15 @@ class EinkFilterTest {
     }
 
     @Test
+    fun tintMatchesTheFilterPaperColour() {
+        // At full contrast, white stays 255 before tinting, so the page colours must agree.
+        for (warmth in listOf(0, 20, 100)) {
+            val paper = EinkFilter.paperColor(EinkFilter.Params(warmth, 100, 16))
+            assertEquals(paper, EinkFilter.tint(255, warmth))
+        }
+    }
+
+    @Test
     fun rgbaAndArgbPathsAgree() {
         val filter = EinkFilter().apply { setParams(EinkFilter.Params(20, 50, 16)) }
         // The same colour, #3366CC, in both memory layouts.

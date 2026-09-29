@@ -61,6 +61,17 @@
     <string name="not_now">Not now</string>
     <string name="start_failed">Couldn\'t start PaperScreen. Make sure its accessibility service is on, then try again.</string>
 
+    <string name="section_home">Home screen</string>
+    <string name="home_screen">Use as home screen</string>
+    <string name="home_screen_hint">A page-style home screen: clock, date, favourites and an alphabetical list of apps, all as text. Long-press a favourite on the home screen to change it. Turning this off opens the system\'s default home app setting.</string>
+    <string name="home_label">PaperScreen Home</string>
+    <string name="home_search_hint">Search apps</string>
+    <string name="home_add_favourite">+</string>
+    <string name="home_empty_slot_description">Empty favourite. Long-press to add an app.</string>
+    <string name="home_pick_favourite">Choose a favourite</string>
+    <string name="home_remove_favourite">Remove</string>
+    <string name="home_launch_failed">Couldn\'t open %1$s</string>
+
     <string name="secure_app_message">Secure app — tap pause to view</string>
 
     <string name="notification_channel">PaperScreen status</string>

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The home screen: a page of an e-reader. Colours are applied in code from the warmth setting. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/home_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:animateLayoutChanges="true"
+    android:orientation="vertical"
+    android:paddingStart="28dp"
+    android:paddingEnd="28dp">
+
+    <!-- Clock, date and favourites; tucked away while a search is typed. -->
+    <LinearLayout
+        android:id="@+id/home_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/home_clock"
+            style="@style/HomeText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="40dp"
+            android:gravity="center_horizontal"
+            android:includeFontPadding="false"
+            android:textSize="76sp"
+            tools:text="9:41" />
+
+        <TextView
+            android:id="@+id/home_date"
+            style="@style/HomeText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_horizontal"
+            android:textSize="18sp"
+            tools:text="Tuesday, 29 September 2026" />
+
+        <View
+            android:id="@+id/home_rule_top"
+            style="@style/HomeRule"
+            android:layout_marginTop="28dp"
+            tools:ignore="PxUsage" />
+
+        <!-- Favourite slots, added in code. -->
+        <LinearLayout
+            android:id="@+id/home_favourites"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:orientation="horizontal" />
+
+        <View
+            android:id="@+id/home_rule_bottom"
+            style="@style/HomeRule"
+            tools:ignore="PxUsage" />
+    </LinearLayout>
+
+    <EditText
+        android:id="@+id/home_search"
+        style="@style/HomeText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:background="@drawable/home_search_underline"
+        android:hint="@string/home_search_hint"
+        android:imeOptions="actionGo|flagNoExtractUi"
+        android:importantForAutofill="no"
+        android:inputType="text|textNoSuggestions"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:singleLine="true"
+        android:textCursorDrawable="@null"
+        android:textSize="17sp" />
+
+    <ListView
+        android:id="@+id/home_apps"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:divider="@null"
+        android:fadingEdgeLength="24dp"
+        android:listSelector="@android:color/transparent"
+        android:requiresFadingEdge="vertical"
+        android:scrollbars="none" />
+</LinearLayout>

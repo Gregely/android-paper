@@ -4,10 +4,12 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.role.RoleManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.MotionEvent
 import android.view.View
@@ -26,6 +28,7 @@ class SettingsActivity : Activity() {
 
     private lateinit var serviceBanner: View
     private lateinit var masterSwitch: Switch
+    private lateinit var homeSwitch: Switch
     private lateinit var statusText: TextView
     private lateinit var intervalValue: TextView
     private lateinit var customInterval: View
@@ -36,6 +39,8 @@ class SettingsActivity : Activity() {
 
     /** Suppresses switch listeners while the UI is being synced to state. */
     private var syncingUi = false
+
+    private var homeRequestedAt = 0L
 
     /** The user asked to start, and we sent them to turn on the accessibility service first. */
     private var startAfterServiceEnabled = false
@@ -51,6 +56,7 @@ class SettingsActivity : Activity() {
 
         serviceBanner = findViewById(R.id.permission_banner)
         masterSwitch = findViewById(R.id.master_switch)
+        homeSwitch = findViewById(R.id.home_switch)
         statusText = findViewById(R.id.status_text)
         intervalValue = findViewById(R.id.interval_value)
         warmthValue = findViewById(R.id.warmth_value)
@@ -67,6 +73,7 @@ class SettingsActivity : Activity() {
         setUpIntervalPresets()
         setUpSliders()
         setUpFeatureToggles()
+        setUpHomeSwitch()
         setUpPreviewButton()
 
         if (!isServiceEnabled() && !settings.servicePromptShown) {
@@ -84,6 +91,7 @@ class SettingsActivity : Activity() {
     override fun onResume() {
         super.onResume()
         render()
+        renderHome() // The default launcher may have changed elsewhere.
         if (startAfterServiceEnabled) {
             startAfterServiceEnabled = false
             if (isServiceEnabled()) beginStart()
@@ -182,6 +190,61 @@ class SettingsActivity : Activity() {
     }
 
     private fun serviceComponent() = ComponentName(this, PaperScreenAccessibilityService::class.java)
+
+    // --- Home screen -----------------------------------------------------------------------
+
+    /** Reflects whether PaperScreen is the default launcher (holds the Home role). */
+    private fun setUpHomeSwitch() {
+        renderHome()
+        homeSwitch.setOnCheckedChangeListener { _, checked ->
+            if (syncingUi) return@setOnCheckedChangeListener
+            if (checked) requestHomeRole() else openHomeSettings()
+            renderHome() // Stays as it is until the system confirms a change.
+        }
+    }
+
+    private fun renderHome() {
+        syncingUi = true
+        homeSwitch.isChecked = isDefaultHome()
+        syncingUi = false
+    }
+
+    private fun isDefaultHome(): Boolean =
+        getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_HOME)
+
+    /** Shows the system's "set as default home app" prompt. */
+    private fun requestHomeRole() {
+        val roles = getSystemService(RoleManager::class.java)
+        if (!roles.isRoleAvailable(RoleManager.ROLE_HOME)) {
+            openHomeSettings()
+            return
+        }
+        homeRequestedAt = SystemClock.uptimeMillis()
+        @Suppress("DEPRECATION")
+        startActivityForResult(roles.createRequestRoleIntent(RoleManager.ROLE_HOME), REQUEST_HOME)
+    }
+
+    @Deprecated("Framework Activity result API; this app avoids AndroidX.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_HOME) return
+        // A refusal this fast means the system didn't show its prompt (e.g. after the user
+        // declined it twice); fall back to the default-apps screen.
+        if (!isDefaultHome() && SystemClock.uptimeMillis() - homeRequestedAt < INSTANT_REFUSAL_MS) {
+            openHomeSettings()
+        }
+        renderHome()
+    }
+
+    /** The system's "Default home app" setting: the only way to switch launchers away. */
+    private fun openHomeSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
+        } catch (e: RuntimeException) {
+            startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+        }
+    }
 
     // --- Controls ------------------------------------------------------------------------
 
@@ -385,6 +448,8 @@ class SettingsActivity : Activity() {
 
     companion object {
         private const val REQUEST_NOTIFICATIONS = 1
+        private const val REQUEST_HOME = 2
+        private const val INSTANT_REFUSAL_MS = 500L
         private const val STATE_START_PENDING = "start_pending"
         private const val EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
         private const val EXTRA_SHOW_FRAGMENT_ARGS = ":settings:show_fragment_args"

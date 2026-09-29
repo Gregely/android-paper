@@ -79,6 +79,18 @@ class EinkFilter {
         private val COOL = floatArrayOf(0.96f, 0.99f, 1.04f)
         private val AMBER = floatArrayOf(1.08f, 0.96f, 0.72f)
 
+        /**
+         * [grey] (0–255) tinted by [warmth] (0–100) exactly as the filter tints its output, for
+         * UI that should match filtered screens (the home screen).
+         */
+        fun tint(grey: Int, warmth: Int): Int {
+            val w = warmth.coerceIn(0, 100) / 100f
+            val r = (grey * lerp(COOL[0], AMBER[0], w)).roundToInt().coerceIn(0, 255)
+            val g = (grey * lerp(COOL[1], AMBER[1], w)).roundToInt().coerceIn(0, 255)
+            val b = (grey * lerp(COOL[2], AMBER[2], w)).roundToInt().coerceIn(0, 255)
+            return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+
         /** The colour white maps to: a blank page. */
         fun paperColor(params: Params): Int = IntArray(256).also { buildLut(params, it) }[255]
 

@@ -13,6 +13,32 @@
         <item name="android:textColorSecondary">@color/ink_secondary</item>
     </style>
 
+    <!-- The home screen is always a white page, whatever the system theme. -->
+    <style name="Theme.PaperScreen.Home" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowShowWallpaper">false</item>
+        <item name="android:statusBarColor">@android:color/white</item>
+        <item name="android:navigationBarColor">@android:color/white</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:colorAccent">@color/home_ink</item>
+        <item name="android:colorControlActivated">@color/home_ink</item>
+        <item name="android:colorControlHighlight">#14333333</item>
+        <item name="android:textColorPrimary">@color/home_ink</item>
+    </style>
+
+    <style name="HomeText">
+        <item name="android:fontFamily">serif</item>
+        <item name="android:textColor">@color/home_ink</item>
+    </style>
+
+    <!-- A one-pixel hairline. -->
+    <style name="HomeRule">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1px</item>
+        <item name="android:background">@color/home_rule</item>
+    </style>
+
     <style name="SectionLabel">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">wrap_content</item>

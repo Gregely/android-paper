@@ -94,6 +94,11 @@ class PaperSettings(context: Context) {
         get() = prefs.getBoolean(KEY_SERVICE_PROMPTED, false)
         set(value) = prefs.edit().putBoolean(KEY_SERVICE_PROMPTED, value).apply()
 
+    /** Home screen favourites, one flattened ComponentName (or null) per slot. */
+    var favourites: List<String?>
+        get() = Favourites.decode(prefs.getString(KEY_FAVOURITES, null))
+        set(value) = prefs.edit().putString(KEY_FAVOURITES, Favourites.encode(value)).apply()
+
     fun filterParams() = EinkFilter.Params(
         warmth = warmth,
         contrast = contrast,
@@ -120,6 +125,7 @@ class PaperSettings(context: Context) {
         private const val KEY_SERVICE_PROMPTED = "service_prompt_shown"
         private const val KEY_CAPTURE_ENABLED = "capture_enabled"
         private const val KEY_NOTIFICATION_PROMPTED = "notification_prompt_shown"
+        private const val KEY_FAVOURITES = "home_favourites"
 
         const val MIN_CUSTOM_INTERVAL_MS = 340
         const val MAX_CUSTOM_INTERVAL_MS = 2000

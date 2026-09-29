@@ -9,4 +9,7 @@
     <color name="warning_bg">#F6E3C4</color>
     <color name="icon_background">#E8E2D6</color>
     <color name="icon_foreground">#3A3835</color>
+    <!-- Home screen, before the warmth tint is applied in code. -->
+    <color name="home_ink">#333333</color>
+    <color name="home_rule">#DDDDDD</color>
 </resources>

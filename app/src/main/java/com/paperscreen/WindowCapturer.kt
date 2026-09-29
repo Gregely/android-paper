@@ -25,8 +25,10 @@ import java.util.concurrent.Executor
  *
  * Windows are captured one at a time. The system refuses a second capture of the same window
  * within 333 ms, so each capture first waits out that window's interval. A capture that meets
- * a FLAG_SECURE window stops there and is dropped ([Listener.onCaptureRejected]); a window
- * that fails for any other reason (error, timeout) is left as a black box over its bounds.
+ * a FLAG_SECURE window stops there and is dropped ([Listener.onCaptureRejected]). A small
+ * floating window that fails for any other reason (a text-selection toolbar the system won't
+ * capture, say) is left out and reported as a hole, so the overlay can show the real window
+ * through it; any other window that fails (error, timeout) is left as a black box.
  *
  * [probe] asks only "is any window secure right now?", without compositing anything, so the
  * service can tell when a secure app has gone.
@@ -44,9 +46,10 @@ class WindowCapturer(
     interface Listener {
         /**
          * Capture [seq] is filtered. [update] holds the pixels that differ from the frame on
-         * screen, or is null when nothing changed.
+         * screen, or is null when nothing changed. [holes] are the screen bounds of small
+         * floating windows that couldn't be captured, to be shown through the overlay.
          */
-        fun onFrameProcessed(seq: Int, update: Update?)
+        fun onFrameProcessed(seq: Int, update: Update?, holes: List<Rect>)
 
         /** Capture or probe [seq] produced nothing usable (no windows reported, or an error). */
         fun onCaptureFailed(seq: Int)
@@ -94,6 +97,9 @@ class WindowCapturer(
 
     /** Windows that last refused capture as secure; probes try them first. Worker only. */
     private val secureWindowIds = HashSet<Int>()
+
+    /** The holes last reported, so a change can be logged once. Worker only. */
+    private var lastHoles: List<Rect> = emptyList()
 
     private class Shot(val target: Target, val buffer: HardwareBuffer?, val colorSpace: ColorSpace?)
 
@@ -158,6 +164,7 @@ class WindowCapturer(
         frameDiff.reset()
         lastCaptureAt.clear()
         secureWindowIds.clear()
+        lastHoles = emptyList()
     }
 
     private fun captureNext(job: Job) {
@@ -250,10 +257,17 @@ class WindowCapturer(
             // The wallpaper is never among the reported windows; start from white, which the
             // filter turns into the paper colour.
             canvas.drawColor(Color.WHITE)
+            val holes = ArrayList<Rect>()
             for (shot in job.shots) {
                 val bitmap = shot.buffer?.let { Bitmap.wrapHardwareBuffer(it, shot.colorSpace) }
                 if (bitmap == null) {
-                    canvas.drawRect(shot.target.bounds, failedPaint)
+                    val bounds = shot.target.bounds
+                    if (FrameCheck.isFloatingWindow(bounds.width(), bounds.height(), width, height)) {
+                        // Shown through the overlay instead; what's beneath it stays in the frame.
+                        holes += Rect(bounds)
+                    } else {
+                        canvas.drawRect(bounds, failedPaint)
+                    }
                     continue
                 }
                 val bounds = shot.target.bounds
@@ -268,7 +282,8 @@ class WindowCapturer(
             // Window shots are hardware bitmaps, so this composites on the GPU and reads back once.
             val composite = Bitmap.createBitmap(picture, width, height, Bitmap.Config.ARGB_8888)
             job.release()
-            process(composite, seq)
+            logHoles(holes)
+            process(composite, seq, holes)
         } catch (e: RuntimeException) {
             Log.w(TAG, "capture failed while compositing", e)
             job.release()
@@ -276,7 +291,17 @@ class WindowCapturer(
         }
     }
 
-    private fun process(composite: Bitmap, seq: Int) {
+    private fun logHoles(holes: List<Rect>) {
+        if (holes == lastHoles) return
+        lastHoles = holes
+        if (holes.isEmpty()) {
+            Log.i(TAG, "all floating windows captured again; overlay holes closed")
+        } else {
+            Log.i(TAG, "couldn't capture floating window(s) at $holes; showing them through the overlay")
+        }
+    }
+
+    private fun process(composite: Bitmap, seq: Int, holes: List<Rect>) {
         val width = composite.width
         val height = composite.height
         val count = width * height
@@ -300,7 +325,7 @@ class WindowCapturer(
             return
         }
         val update = frameDiff.diff(pixels, width, height)?.let { Update(epoch, width, height, it) }
-        main.post { listener.onFrameProcessed(seq, update) }
+        main.post { listener.onFrameProcessed(seq, update, holes) }
     }
 
     private companion object {

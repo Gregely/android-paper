@@ -95,6 +95,16 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     /** Something changed while a capture was already running. */
     private var changedDuringCapture = false
 
+    /** ...and it should be picked up at once, not at the next interval (text selection). */
+    private var urgentAfterCapture = false
+
+    /**
+     * Until this time (uptime), window changes are refreshed at once: the text-selection
+     * toolbar appears (as a window) just after the selection changes.
+     */
+    private var selectionBurstUntil = 0L
+    private val selectionFollowUp = Runnable { refreshNow() }
+
     /**
      * Extra delay for change-triggered refreshes after ones that found nothing new, so a
      * stream of events without visible changes can't keep capturing.
@@ -179,9 +189,66 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // Unlocking produces window events too, so this doubles as a safety net for resuming.
         resumeIfDue()
+        if (!isCapturing) return
+        val type = event?.eventType ?: 0
+        if (type == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED) {
+            onSelectionChanged()
+            return
+        }
+        if (type == AccessibilityEvent.TYPE_WINDOWS_CHANGED && SystemClock.uptimeMillis() < selectionBurstUntil) {
+            // Most likely the selection toolbar appearing or going: show it now.
+            refreshNow()
+            return
+        }
         // The config only subscribes to event types that usually mean something visible changed.
         // While a secure app is up, any event (switching apps, say) is worth a look.
-        if (isCapturing && (refreshOnChange || phase == Phase.SECURE)) onContentChanged()
+        if (refreshOnChange || phase == Phase.SECURE) onContentChanged()
+    }
+
+    /**
+     * Text was selected (or the selection moved or cleared): the selection handles and the
+     * floating toolbar need to show now, not a stale frame from before them. Refreshes at once,
+     * again when the toolbar has had time to animate in, and for a moment treats window
+     * changes (the toolbar window coming and going) the same way.
+     */
+    private fun onSelectionChanged() {
+        selectionBurstUntil = SystemClock.uptimeMillis() + SELECTION_BURST_MS
+        refreshNow()
+        main.removeCallbacks(selectionFollowUp)
+        main.postDelayed(selectionFollowUp, TOOLBAR_SETTLE_MS)
+        logWindows("text selection changed")
+    }
+
+    /**
+     * A refresh as soon as possible, ignoring the interval and any backoff. (Each window can
+     * still only be captured every 333 ms; the capture waits that out if it has to.)
+     */
+    private fun refreshNow() {
+        when (phase) {
+            Phase.IDLE -> {
+                cancelScheduledRefresh()
+                requestRefresh(0L)
+            }
+            Phase.CAPTURING -> {
+                changedDuringCapture = true
+                urgentAfterCapture = true
+            }
+            Phase.SECURE -> requestProbe(0L)
+            Phase.PAUSED -> Unit
+        }
+    }
+
+    /**
+     * With `adb shell setprop log.tag.PaperScreen DEBUG`, lists the windows the system
+     * reports, e.g. to see whether the text-selection toolbar is among them.
+     */
+    private fun logWindows(reason: String) {
+        if (!Log.isLoggable(TAG, Log.DEBUG)) return
+        val list = windows.joinToString("\n") { info ->
+            val bounds = Rect().also(info::getBoundsInScreen)
+            "  #${info.id} type=${info.type} layer=${info.layer} $bounds \"${info.title ?: ""}\""
+        }
+        Log.d(TAG, "$reason; windows:\n$list")
     }
 
     override fun onInterrupt() = Unit
@@ -252,6 +319,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         phase = Phase.PAUSED
         seq++
         cancelScheduledRefresh()
+        main.removeCallbacks(selectionFollowUp)
+        urgentAfterCapture = false
         cancelProbe()
         clearSnooze()
         main.removeCallbacks(warmthTick)
@@ -301,6 +370,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         val refresh = ++seq
         phase = Phase.CAPTURING
         changedDuringCapture = false
+        urgentAfterCapture = false
         lastRefreshStart = SystemClock.uptimeMillis()
         captureInGrace = lastRefreshStart < graceUntil
         cap.capture(refresh, captureTargets(), geometry.width, geometry.height)
@@ -316,7 +386,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
                 WindowCapturer.Target(info.id, info.layer, bounds)
             }
 
-    override fun onFrameProcessed(seq: Int, update: WindowCapturer.Update?) {
+    override fun onFrameProcessed(seq: Int, update: WindowCapturer.Update?, holes: List<Rect>) {
         val current = seq == this.seq && phase == Phase.CAPTURING
         // Just after unlocking or a secure app, no forced full refresh: the first good frame is
         // a plain one, and a due full refresh waits for the next capture.
@@ -333,6 +403,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
             return
         }
         val window = overlay
+        // Floating windows that couldn't be captured show through; closed once they're gone.
+        window?.setHoles(holes)
         if (window == null || applied == null) {
             finishRefresh(changed = false)
             return
@@ -456,7 +528,12 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private fun finishRefresh(changed: Boolean) {
         phase = Phase.IDLE
         backoffMs = if (changed) 0L else min(max(backoffMs * 2, MIN_BACKOFF_MS), MAX_BACKOFF_MS)
-        if (!refreshOnChange || changedDuringCapture) requestRefresh()
+        if (urgentAfterCapture) {
+            urgentAfterCapture = false
+            requestRefresh(0L)
+        } else if (!refreshOnChange || changedDuringCapture) {
+            requestRefresh()
+        }
     }
 
     // --- Secure apps ---------------------------------------------------------------------
@@ -531,6 +608,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         capturer?.reset(frameEpoch)
         frameBitmap = null
         overlay?.view?.setFrame(null)
+        overlay?.setHoles(emptyList())
         overlay?.detach()
     }
 
@@ -898,6 +976,9 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         private const val MAX_BACKOFF_MS = 1_000L
         private const val SNOOZE_MS = 5 * 60 * 1_000L
         private const val SECURE_NOTICE_MS = 2_000L
+        /** After a text selection change: when to look again for the toolbar, and for how long window changes are refreshed at once. */
+        private const val TOOLBAR_SETTLE_MS = 400L
+        private const val SELECTION_BURST_MS = 1_500L
         private const val STARTUP_TIMEOUT_MS = 5_000L
         /** After a secure app: how long the overlay waits before its first capture. */
         private const val SECURE_COOLDOWN_MS = 500L

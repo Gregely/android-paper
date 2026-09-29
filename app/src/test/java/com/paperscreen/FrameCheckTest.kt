@@ -37,4 +37,15 @@ class FrameCheckTest {
         assertTrue(FrameCheck.isUniform(pixels, 99))
         assertTrue(FrameCheck.isUniform(pixels, 0))
     }
+
+    @Test
+    fun floatingWindowsAreSmall() {
+        // A selection toolbar on a 1080×2400 screen.
+        assertTrue(FrameCheck.isFloatingWindow(700, 140, 1080, 2400))
+        // A third of the screen still counts; the app window or keyboard doesn't.
+        assertTrue(FrameCheck.isFloatingWindow(1080, 800, 1080, 2400))
+        assertFalse(FrameCheck.isFloatingWindow(1080, 801, 1080, 2400))
+        assertFalse(FrameCheck.isFloatingWindow(1080, 2400, 1080, 2400))
+        assertFalse(FrameCheck.isFloatingWindow(0, 140, 1080, 2400))
+    }
 }

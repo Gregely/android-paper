@@ -7,6 +7,17 @@ package com.paperscreen
  */
 object FrameCheck {
 
+    /**
+     * Whether a window of [width]×[height] is a small floating one (a text-selection toolbar,
+     * a popup menu) rather than an app or a large panel: at most a third of the screen. When
+     * such a window can't be captured, it's shown through a hole in the overlay instead of
+     * as a black box.
+     */
+    fun isFloatingWindow(width: Int, height: Int, screenWidth: Int, screenHeight: Int): Boolean {
+        if (width <= 0 || height <= 0) return false
+        return width.toLong() * height * 3 <= screenWidth.toLong() * screenHeight
+    }
+
     /** Grey levels within which a frame still counts as a single colour. */
     const val UNIFORM_TOLERANCE = 4
 

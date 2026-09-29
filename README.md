@@ -127,6 +127,25 @@ The schedule is one of:
   it can be off by 30 minutes or more if you're far from that city. The settings screen shows
   which source is in use and the estimated times.
 
+**Text selection.** Selecting text (or moving or clearing a selection) refreshes at once,
+ignoring the interval, so the selection handles and the floating toolbar (Copy, Paste…)
+appear straight away instead of a frame from before they existed. It refreshes again 400 ms
+later, once the toolbar has animated in. For 1.5 seconds after a selection change, window
+changes (the toolbar window coming and going) are refreshed at once too. Each window can
+still only be captured every 333 ms, so "at once" can mean up to that long. This works even
+with *Refresh on change* off.
+
+The toolbar is normally a window of its own, captured and filtered like any other. If the
+system reports a small floating window (at most a third of the screen) but won't capture
+it, PaperScreen shows it through a hole in the overlay instead of a black box. The overlay
+is cleared there (Porter-Duff `CLEAR`), so the real window shows in full colour, and the
+hole closes on the first refresh after the window has gone. While there's a hole, the
+overlay window is translucent; otherwise it stays opaque, so the compositor can skip what's
+underneath. The rest of the screen stays filtered. To see what the system reports, run
+`adb shell setprop log.tag.PaperScreen DEBUG`, then `adb logcat -s PaperScreen`. Each
+selection change lists the windows (id, type, layer, bounds, title), and opening or closing
+a hole is logged too.
+
 **Refresh on change.** With **Refresh only when the screen changes** on (the default),
 refreshes are triggered by accessibility events that usually mean something visible changed:
 content or window changes, scrolling, text edits, clicks and notifications. It still refreshes

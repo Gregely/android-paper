@@ -12,23 +12,35 @@ warmth 100, 4 grey levels, and contrast 100 with 32 levels.*
 ## How it works
 
 ```
-SettingsActivity ──(overlay permission, capture consent)──▶ PaperScreenService (foreground, mediaProjection)
+SettingsActivity ──(capture consent)──▶ PaperScreenAccessibilityService
+                                          (enabled in Accessibility settings;
+                                           mediaProjection foreground service while capturing)
                                                              │
           MediaProjection ▶ VirtualDisplay ▶ ImageReader ────┤  ScreenCapturer (worker thread)
                                                              │    RGBA frame ▶ EinkFilter ▶ Bitmap
                                                              ▼
-                                   OverlayWindow (TYPE_APPLICATION_OVERLAY, FLAG_NOT_TOUCHABLE)
+                          OverlayWindow (TYPE_ACCESSIBILITY_OVERLAY, opaque, FLAG_NOT_TOUCHABLE)
 ```
 
-Each refresh (`PaperScreenService.beginRefresh`):
+The overlay is owned by an accessibility service because `TYPE_ACCESSIBILITY_OVERLAY` is the
+one window type a regular app can draw that is **fully opaque and still passes touches
+through**. Ordinary app overlays are capped at 80% opacity for touch pass-through since
+Android 12, which let the live screen bleed through. The service reads no accessibility
+events and no window content.
 
-1. **Clear** the overlay. The capture includes our own overlay, so the overlay has to be
-   transparent while a frame is grabbed. Otherwise it would capture its own output.
-2. **Settle** for about 3 vsyncs, then redraw the overlay (still transparent) so the compositor
-   produces a fresh frame even if nothing else is moving, and grab that frame.
-3. **Flash** the overlay to flat `#C8C8C8` for 80 ms while the frame is filtered on a worker
-   thread.
-4. **Show** the filtered frame, drawn 1:1 in screen pixels, and leave it frozen.
+Each refresh is one page turn (`PaperScreenAccessibilityService.beginRefresh`):
+
+1. **Flash.** The overlay turns flat `#C8C8C8`, hiding the old frame.
+2. **Capture.** Near the end of the ~80 ms flash, the overlay goes clear for a **single frame**
+   and is grey again on the next vsync. The capture includes our own overlay, so this blink is
+   the only moment it can see the real screen. `ScreenCapturer` ignores frames that show the
+   flash (recognised by colour, and by comparison with a reference flash frame) and takes the
+   clear one.
+3. **Show.** The frame is filtered on a worker thread and replaces the flash, drawn 1:1 in
+   screen pixels, and stays frozen until the next refresh.
+
+If a capture is missed (the compositor dropped the clear frame), the blink is lengthened to
+2–3 frames, then stepped back to one after a run of clean captures.
 
 Refreshes run every interval (200–2000 ms, default 500). With **Refresh only when the screen
 changes** turned on (the default), the service watches for new composited frames between
@@ -53,12 +65,15 @@ same code over a `PixelCopy` snapshot of its own window.
 
 ### Lifecycle
 
-- **Screen off / locked:** capture pauses and the overlay hides. It resumes on unlock
-  (`ACTION_USER_PRESENT`).
+- **Screen off / locked:** capture pauses and the overlay hides (accessibility overlays would
+  otherwise cover the lock screen). On unlock (`ACTION_USER_PRESENT`) the overlay comes back
+  as the grey flash, and the first capture replaces it.
 - **Rotation / resolution change:** a `DisplayListener` resizes the virtual display, image
-  reader and overlay, drops the stale frame, and refreshes once the rotation animation is done.
+  reader and overlay, shows the flash in place of the stale frame, and refreshes once the
+  rotation animation is done.
 - **Capture revoked** (from system UI, or by the system): `MediaProjection.Callback.onStop`
-  stops the service and the toggle in settings turns off.
+  ends the capture session and the toggle in settings turns off. The accessibility service
+  stays enabled but idle.
 - **Notification:** persistent, with a **Stop** action. Tapping it opens settings.
 
 ## Building
@@ -73,34 +88,41 @@ Requirements: JDK 17+ and an Android SDK with platform 34.
 - `minSdk` 28, `targetSdk`/`compileSdk` 34, Gradle Kotlin DSL, AGP 8.10, Kotlin 2.1.
 - No libraries: the app uses only framework APIs and the Kotlin stdlib (JUnit is test-only).
 
-## Permissions
+## Permissions and setup
 
-| Permission | Why |
+| What | Why |
 |---|---|
-| `SYSTEM_ALERT_WINDOW` | Drawing the overlay. Requested on first launch, with a link to the system settings page. |
-| MediaProjection consent | Screen capture. Asked for each time the service starts. On Android 14+ it is limited to whole-screen capture. |
-| `FOREGROUND_SERVICE_MEDIA_PROJECTION` | Required for the capture service on Android 14. |
+| PaperScreen accessibility service | Owns the opaque, touch-transparent overlay. Turned on by the user in **Settings → Accessibility**; the app explains this on first launch and links there. |
+| MediaProjection consent | Screen capture. Asked for each time capture starts. On Android 14+ it is limited to whole-screen capture. |
+| `FOREGROUND_SERVICE_MEDIA_PROJECTION` | Required for capturing on Android 14. |
 | `POST_NOTIFICATIONS` | The status notification and its Stop action (Android 13+). |
+
+`SYSTEM_ALERT_WINDOW` is no longer used.
+
+**Sideloaded APKs on Android 13+:** the system treats accessibility services from apps not
+installed through an app store as a "restricted setting", so the switch starts out greyed
+out. Open **App info → PaperScreen → ⋮ → Allow restricted settings**, then turn the service on.
 
 ## Known limitations
 
-These come from the Android platform, not from settings you can change:
+These come from the Android platform:
 
-- **A brief glimpse of the live screen on each refresh.** A third-party app can't exclude its
-  own overlay from MediaProjection. The overlay has to go transparent for a few frames
-  (about 50–80 ms at 60 Hz) while a frame is grabbed. The grey flash follows right after, so it
-  reads as part of the page turn. On-change mode keeps it from happening on static screens.
-- **80% overlay opacity on Android 12+.** Since Android 12, touches only pass through another
-  app's overlay if the overlay is at most `InputManager.maximumObscuringOpacityForTouch` opaque
-  (0.8 by default). PaperScreen uses exactly that value, so the live screen shows through
-  faintly. A fully opaque overlay would need an AccessibilityService overlay instead.
-- **Secure content** (`FLAG_SECURE`: banking apps, DRM video) captures as black. Full-black
-  frames are detected, and the overlay stays clear so those apps remain usable. They just
-  aren't filtered.
-- **Status bar and keyboard stay in colour.** They sit above every app overlay by design. The
-  frozen frame includes them, so between refreshes their icons line up with the live ones.
+- **One frame of the live screen per refresh.** The screen capture and the physical display
+  are composited from the same window state at the same moment, so the frame the capture
+  sees unfiltered is also shown on the panel. There is no public API to leave an overlay out
+  of a capture, so this can't be zero. It is a single frame (about 8–17 ms, depending on
+  the refresh rate) between two grey frames of the flash. If the compositor drops that frame, the
+  blink is briefly lengthened to 2–3 frames (see above).
+- **Everything is filtered, including system UI.** Accessibility overlays sit above the
+  status bar, notification shade and keyboard, so those also appear filtered and frozen,
+  updating on each refresh. Touches still go straight through to them.
+- **Secure content** (`FLAG_SECURE`: banking apps, DRM video) captures as black. When the
+  middle of a capture is pure black, the overlay goes clear so those apps remain usable,
+  unfiltered. The next refresh captures without a flash first, since nothing is hidden.
 - In on-change mode, a change that starts and finishes within about 150 ms after a refresh
   can be missed until the next change. Frames from our own redraw are ignored during that
   window. Status-bar clock updates will always pick it up.
 - Some newer Android versions end screen capture when the device locks. PaperScreen then
-  stops, and needs turning back on (a new capture consent).
+  stops capturing, and needs turning back on (a new capture consent).
+- Google Play restricts accessibility-service use to apps that meet its accessibility API
+  policy. This matters only if you publish there.

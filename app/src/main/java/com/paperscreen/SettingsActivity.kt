@@ -4,11 +4,11 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -25,7 +25,7 @@ class SettingsActivity : Activity() {
     private lateinit var settings: PaperSettings
     private lateinit var preview: FilterPreview
 
-    private lateinit var permissionBanner: View
+    private lateinit var serviceBanner: View
     private lateinit var masterSwitch: Switch
     private lateinit var statusText: TextView
     private lateinit var intervalValue: TextView
@@ -36,19 +36,19 @@ class SettingsActivity : Activity() {
     /** Suppresses switch listeners while the UI is being synced to state. */
     private var syncingUi = false
 
-    /** The user asked to start, and we sent them to grant the overlay permission first. */
-    private var startAfterOverlayGrant = false
+    /** The user asked to start, and we sent them to turn on the accessibility service first. */
+    private var startAfterServiceEnabled = false
 
-    private val runningListener: (Boolean) -> Unit = { renderRunning(it) }
+    private val stateListener: (PaperScreenAccessibilityService.State) -> Unit = { render() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
         settings = PaperSettings(this)
         preview = FilterPreview(this)
-        startAfterOverlayGrant = savedInstanceState?.getBoolean(STATE_START_PENDING) ?: false
+        startAfterServiceEnabled = savedInstanceState?.getBoolean(STATE_START_PENDING) ?: false
 
-        permissionBanner = findViewById(R.id.permission_banner)
+        serviceBanner = findViewById(R.id.permission_banner)
         masterSwitch = findViewById(R.id.master_switch)
         statusText = findViewById(R.id.status_text)
         intervalValue = findViewById(R.id.interval_value)
@@ -56,35 +56,34 @@ class SettingsActivity : Activity() {
         contrastValue = findViewById(R.id.contrast_value)
         levelsValue = findViewById(R.id.levels_value)
 
-        findViewById<Button>(R.id.grant_button).setOnClickListener { openOverlaySettings() }
+        findViewById<Button>(R.id.grant_button).setOnClickListener { openAccessibilitySettings() }
         masterSwitch.setOnCheckedChangeListener { _, checked ->
             if (syncingUi) return@setOnCheckedChangeListener
-            if (checked) beginStart() else PaperScreenService.stop(this)
+            if (checked) beginStart() else PaperScreenAccessibilityService.stopCapture()
         }
 
         setUpSliders()
         setUpOnChangeSwitch()
         setUpPreviewButton()
 
-        if (!Settings.canDrawOverlays(this) && !settings.overlayPromptShown) {
-            settings.overlayPromptShown = true
-            showOverlayDialog()
+        if (!isServiceEnabled() && !settings.servicePromptShown) {
+            settings.servicePromptShown = true
+            showServiceDialog()
         }
     }
 
     override fun onStart() {
         super.onStart()
-        PaperScreenService.addStateListener(runningListener)
-        renderRunning(PaperScreenService.isRunning)
+        PaperScreenAccessibilityService.addStateListener(stateListener)
+        render()
     }
 
     override fun onResume() {
         super.onResume()
-        val canDraw = Settings.canDrawOverlays(this)
-        permissionBanner.visibility = if (canDraw) View.GONE else View.VISIBLE
-        if (startAfterOverlayGrant) {
-            startAfterOverlayGrant = false
-            if (canDraw) beginStart() else renderRunning(PaperScreenService.isRunning)
+        render()
+        if (startAfterServiceEnabled) {
+            startAfterServiceEnabled = false
+            if (isServiceEnabled()) beginStart()
         }
     }
 
@@ -94,7 +93,7 @@ class SettingsActivity : Activity() {
     }
 
     override fun onStop() {
-        PaperScreenService.removeStateListener(runningListener)
+        PaperScreenAccessibilityService.removeStateListener(stateListener)
         super.onStop()
     }
 
@@ -105,22 +104,23 @@ class SettingsActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean(STATE_START_PENDING, startAfterOverlayGrant)
+        outState.putBoolean(STATE_START_PENDING, startAfterServiceEnabled)
     }
 
-    // --- Start flow: overlay permission → notification permission → capture consent -------
+    // --- Start flow: accessibility service → notification permission → capture consent ----
 
     private fun beginStart() {
-        if (PaperScreenService.isRunning) return
-        if (!Settings.canDrawOverlays(this)) {
-            startAfterOverlayGrant = true
-            showOverlayDialog()
+        if (PaperScreenAccessibilityService.state == PaperScreenAccessibilityService.State.RUNNING) return
+        if (!isServiceEnabled()) {
+            startAfterServiceEnabled = true
+            showServiceDialog()
+            render()
             return
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-            // The service runs either way; this only makes its stop toggle visible.
+            // Capture runs either way; this only makes its stop toggle visible.
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
             return
         }
@@ -150,41 +150,63 @@ class SettingsActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQUEST_CAPTURE) return
         if (resultCode == RESULT_OK && data != null) {
-            PaperScreenService.start(this, resultCode, data)
+            if (!PaperScreenAccessibilityService.startCapture(resultCode, data)) {
+                Toast.makeText(this, R.string.start_failed, Toast.LENGTH_LONG).show()
+            }
         } else {
             Toast.makeText(this, R.string.capture_denied, Toast.LENGTH_LONG).show()
-            renderRunning(PaperScreenService.isRunning)
         }
+        render()
     }
 
-    private fun showOverlayDialog() {
+    private fun showServiceDialog() {
+        var message = getString(R.string.service_dialog_message)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Sideloaded apps can't enable accessibility services until this is allowed.
+            message += getString(R.string.service_dialog_restricted)
+        }
         AlertDialog.Builder(this)
-            .setTitle(R.string.overlay_dialog_title)
-            .setMessage(R.string.overlay_dialog_message)
-            .setPositiveButton(R.string.open_settings) { _, _ -> openOverlaySettings() }
+            .setTitle(R.string.service_dialog_title)
+            .setMessage(message)
+            .setPositiveButton(R.string.open_settings) { _, _ -> openAccessibilitySettings() }
             .setNegativeButton(R.string.not_now) { _, _ -> abandonStart() }
             .setOnCancelListener { abandonStart() }
             .show()
     }
 
     private fun abandonStart() {
-        startAfterOverlayGrant = false
-        renderRunning(PaperScreenService.isRunning)
+        startAfterServiceEnabled = false
+        render()
     }
 
-    private fun openOverlaySettings() {
-        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-        try {
-            startActivity(intent)
-        } catch (e: RuntimeException) {
-            // Some builds don't support the package-specific page.
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
-        }
+    private fun openAccessibilitySettings() {
+        val component = serviceComponent().flattenToString()
+        // Many Settings builds scroll to and highlight the entry named by these extras.
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            .putExtra(EXTRA_FRAGMENT_ARG_KEY, component)
+            .putExtra(EXTRA_SHOW_FRAGMENT_ARGS, Bundle().apply { putString(EXTRA_FRAGMENT_ARG_KEY, component) })
+        startActivity(intent)
     }
+
+    /**
+     * Whether the user has turned the service on. The system setting is checked as well as
+     * the live connection, since the service may still be binding right after a process start.
+     */
+    private fun isServiceEnabled(): Boolean {
+        if (PaperScreenAccessibilityService.state != PaperScreenAccessibilityService.State.DISABLED) return true
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?: return false
+        val me = serviceComponent()
+        return enabled.split(':').any { ComponentName.unflattenFromString(it) == me }
+    }
+
+    private fun serviceComponent() = ComponentName(this, PaperScreenAccessibilityService::class.java)
 
     // --- Controls ------------------------------------------------------------------------
 
-    private fun renderRunning(running: Boolean) {
+    private fun render() {
+        val running = PaperScreenAccessibilityService.state == PaperScreenAccessibilityService.State.RUNNING
+        serviceBanner.visibility = if (isServiceEnabled()) View.GONE else View.VISIBLE
         syncingUi = true
         masterSwitch.isChecked = running
         syncingUi = false
@@ -281,5 +303,7 @@ class SettingsActivity : Activity() {
         private const val REQUEST_CAPTURE = 1
         private const val REQUEST_NOTIFICATIONS = 2
         private const val STATE_START_PENDING = "start_pending"
+        private const val EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
+        private const val EXTRA_SHOW_FRAGMENT_ARGS = ":settings:show_fragment_args"
     }
 }

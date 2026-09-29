@@ -1,6 +1,7 @@
 package com.paperscreen
 
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -14,9 +15,11 @@ import java.nio.ByteOrder
 /**
  * Mirrors the screen into an [ImageReader] and turns single frames into filtered bitmaps.
  *
- * The capture always includes our own overlay, so the service clears the overlay before
- * asking for a frame. Between grabs the reader's surface is either detached (no compositing
- * cost) or used only as a cheap "something on screen changed" signal.
+ * The capture always includes our own overlay. The service arms a grab while the overlay
+ * shows the grey page-turn flash and then makes the overlay clear for a single frame; the
+ * grab skips the flash frames (recognised by colour, and by comparison with a reference
+ * flash frame) and takes the one clear frame. Between grabs the reader's surface is either
+ * detached (no compositing cost) or used only as a cheap "something on screen changed" signal.
  *
  * Public methods may be called from any thread; all state lives on [worker]. Listener
  * callbacks are delivered on [main].
@@ -32,7 +35,7 @@ class ScreenCapturer(
         /** A frame arrived while watching: the screen content changed. */
         fun onContentChanged()
 
-        /** Frame [seq] was grabbed; the overlay may be shown again. */
+        /** Frame [seq] was grabbed and is being filtered. */
         fun onFrameCaptured(seq: Int)
 
         /** Frame [seq] is filtered. [frame] is null when it is identical to [displayed]. */
@@ -50,7 +53,7 @@ class ScreenCapturer(
 
     class Frame(val bitmap: Bitmap, val checksum: Long)
 
-    private enum class Mode { IDLE, PREPARING, GRABBING, WATCHING }
+    private enum class Mode { IDLE, REFERENCE, GRABBING, WATCHING }
 
     /** Read on [worker] for every processed frame. */
     @Volatile var filterParams: EinkFilter.Params? = null
@@ -66,6 +69,9 @@ class ScreenCapturer(
     private var grabSeq = 0
     private var watchFromUptime = 0L
     private var pixels = IntArray(0)
+    /** The latest frame that showed our flash, for telling flash frames from real ones. */
+    private var reference = IntArray(0)
+    private var hasReference = false
     private val buffers = arrayOfNulls<Bitmap>(2)
 
     fun start(geometry: DisplayGeometry) = worker.post {
@@ -93,16 +99,19 @@ class ScreenCapturer(
         if (needsSurface) attach()
     }
 
-    /** Starts compositing into the reader; frames are dropped until [grab]. */
+    /**
+     * Starts compositing into the reader while the overlay shows the flash. Frames are only
+     * kept as the flash reference until [grab].
+     */
     fun prepareGrab() = worker.post {
-        mode = Mode.PREPARING
+        mode = Mode.REFERENCE
+        hasReference = false
         attach()
     }
 
-    /** Takes the next frame that arrives, or reports a timeout. */
+    /** Takes the first frame that isn't our flash, or reports a timeout. */
     fun grab(seq: Int, timeoutMs: Long) = worker.post {
-        // Anything already queued may predate the overlay being cleared.
-        drain()
+        if (mode != Mode.REFERENCE) hasReference = false
         mode = Mode.GRABBING
         grabSeq = seq
         attach()
@@ -139,6 +148,8 @@ class ScreenCapturer(
         reader = null
         buffers.fill(null)
         pixels = IntArray(0)
+        reference = IntArray(0)
+        hasReference = false
     }
 
     override fun onImageAvailable(source: ImageReader) {
@@ -148,13 +159,25 @@ class ScreenCapturer(
             return
         }
         when (mode) {
+            Mode.REFERENCE -> {
+                val (width, height) = readAndClose(image)
+                if (isFlash(width * height)) keepAsReference()
+            }
             Mode.GRABBING -> {
-                mode = Mode.IDLE
-                detach()
                 val seq = grabSeq
                 try {
-                    process(image, seq)
+                    val (width, height) = readAndClose(image)
+                    val count = width * height
+                    if (isFlash(count) && !differsFromReference(count)) {
+                        keepAsReference() // Still the flash; wait for the clear frame.
+                        return
+                    }
+                    mode = Mode.IDLE
+                    detach()
+                    process(width, height, seq)
                 } catch (e: RuntimeException) {
+                    mode = Mode.IDLE
+                    detach()
                     main.post { listener.onCaptureTimedOut(seq) }
                 }
             }
@@ -166,24 +189,27 @@ class ScreenCapturer(
                     main.post { listener.onContentChanged() }
                 }
             }
-            Mode.IDLE, Mode.PREPARING -> image.close()
+            Mode.IDLE -> image.close()
         }
     }
 
-    private fun process(image: Image, seq: Int) {
+    private fun readAndClose(image: Image): Pair<Int, Int> {
         val width = image.width
         val height = image.height
-        val count = width * height
         try {
             readPixels(image, width, height)
         } finally {
             image.close()
         }
-        if (isAllBlack(count)) {
+        return width to height
+    }
+
+    private fun process(width: Int, height: Int, seq: Int) {
+        val count = width * height
+        if (isSecureBlank(width, height)) {
             main.post { listener.onFrameBlank(seq) }
             return
         }
-        // The overlay can come back (as the page-turn flash) while we filter.
         main.post { listener.onFrameCaptured(seq) }
 
         filterParams?.let(filter::setParams)
@@ -216,14 +242,71 @@ class ScreenCapturer(
         }
     }
 
-    /** Stops at the first lit pixel, so ordinary frames cost almost nothing. */
-    private fun isAllBlack(count: Int): Boolean {
+    /**
+     * True when the middle of the frame is pure black, which is how captures show FLAG_SECURE
+     * windows. The top and bottom are skipped because the system bars are never blanked.
+     * Stops at the first lit pixel, so ordinary frames cost almost nothing.
+     */
+    private fun isSecureBlank(width: Int, height: Int): Boolean {
         val pixels = pixels
-        for (i in 0 until count) {
+        val from = width * (height * 8 / 100)
+        val to = width * (height * 92 / 100)
+        for (i in from until to) {
             if (pixels[i] and 0x00FFFFFF != 0) return false
         }
         return true
     }
+
+    /**
+     * Whether a sampled share of the frame is our flash grey. The system bars, keyboard or a
+     * pulled-down shade may cover some of it, hence the modest threshold.
+     */
+    private fun isFlash(count: Int): Boolean {
+        val pixels = pixels
+        var samples = 0
+        var grey = 0
+        var i = 0
+        while (i < count) {
+            val v = pixels[i]
+            samples++
+            if (near(v and 0xFF, FLASH_GREY) && near((v ushr 8) and 0xFF, FLASH_GREY) &&
+                near((v ushr 16) and 0xFF, FLASH_GREY)
+            ) {
+                grey++
+            }
+            i += SAMPLE_STRIDE
+        }
+        return samples > 0 && grey >= samples * FLASH_SHARE
+    }
+
+    /**
+     * Catches real content that happens to be mostly flash grey: it still differs from a
+     * frame that showed nothing but the flash.
+     */
+    private fun differsFromReference(count: Int): Boolean {
+        if (!hasReference || reference.size != count) return false
+        val pixels = pixels
+        val reference = reference
+        var samples = 0
+        var changed = 0
+        var i = 0
+        while (i < count) {
+            samples++
+            if (pixels[i] != reference[i]) changed++
+            i += DIFF_STRIDE
+        }
+        return changed > samples * DIFF_SHARE
+    }
+
+    /** Swaps buffers so the frame just read becomes the reference (no copy). */
+    private fun keepAsReference() {
+        val previous = reference
+        reference = pixels
+        pixels = if (previous.size == reference.size) previous else IntArray(reference.size)
+        hasReference = true
+    }
+
+    private fun near(channel: Int, target: Int) = channel in (target - GREY_TOLERANCE)..(target + GREY_TOLERANCE)
 
     /** A bitmap of the right size that the overlay is not currently drawing. */
     private fun backBuffer(width: Int, height: Int, inUse: Bitmap?): Bitmap {
@@ -263,10 +346,6 @@ class ScreenCapturer(
         surfaceAttached = false
     }
 
-    private fun drain() {
-        reader?.let { acquireLatest(it)?.close() }
-    }
-
     private fun acquireLatest(source: ImageReader): Image? =
         try {
             source.acquireLatestImage()
@@ -274,4 +353,13 @@ class ScreenCapturer(
             // Closed reader, or too many images acquired; either way there's nothing to use.
             null
         }
+
+    private companion object {
+        val FLASH_GREY = Color.red(OverlayWindow.FLASH_COLOR)
+        const val GREY_TOLERANCE = 6
+        const val SAMPLE_STRIDE = 17
+        const val FLASH_SHARE = 0.3f
+        const val DIFF_STRIDE = 5
+        const val DIFF_SHARE = 0.02f
+    }
 }

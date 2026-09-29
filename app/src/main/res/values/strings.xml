@@ -7,8 +7,8 @@
     <string name="status_running">On — the screen refreshes like paper</string>
     <string name="status_stopped">Off</string>
 
-    <string name="overlay_missing">PaperScreen needs permission to draw over other apps.</string>
-    <string name="grant">Grant</string>
+    <string name="service_missing">Turn on the PaperScreen accessibility service to use PaperScreen.</string>
+    <string name="grant">Set up</string>
 
     <string name="refresh_interval">Refresh interval</string>
     <string name="refresh_interval_value">%1$d ms</string>
@@ -24,12 +24,16 @@
     <string name="hold_to_preview">Hold to preview</string>
     <string name="preview_hint">Applies the current filter to this screen while held.</string>
 
-    <string name="overlay_dialog_title">Allow display over other apps</string>
-    <string name="overlay_dialog_message">PaperScreen draws a filtered copy of your screen on top of other apps. On the next screen, find PaperScreen and turn on \"Allow display over other apps\", then come back.</string>
+    <string name="service_dialog_title">Turn on the PaperScreen service</string>
+    <string name="service_dialog_message">PaperScreen draws its filtered screen as an accessibility overlay. That\'s the only kind of overlay Android lets be fully opaque while your taps still reach the apps underneath. PaperScreen doesn\'t read anything on your screen through this service.\n\nOn the next screen, open Installed apps (or Downloaded apps), choose PaperScreen, and turn it on. Then come back here.</string>
+    <string name="service_dialog_restricted">\n\nIf the switch is greyed out as a \"restricted setting\", open App info for PaperScreen, tap ⋮ in the top corner, choose \"Allow restricted settings\", and try again.</string>
     <string name="open_settings">Open settings</string>
     <string name="not_now">Not now</string>
     <string name="capture_denied">Screen capture permission is needed to run PaperScreen.</string>
-    <string name="overlay_failed">Couldn\'t show the overlay. Check the \"display over other apps\" permission.</string>
+    <string name="start_failed">Couldn\'t start PaperScreen. Make sure its accessibility service is still on, then try again.</string>
+
+    <string name="accessibility_summary">Shows your screen in e-ink style</string>
+    <string name="accessibility_description">PaperScreen redraws your screen in the style of an e-ink display, with a paper-like grey page turn on each refresh. It uses this service only to draw a full-screen overlay that your taps pass through. It doesn\'t read or change anything on your screen through this service. Screen capture is asked for separately, each time you turn PaperScreen on.</string>
 
     <string name="notification_channel">PaperScreen status</string>
     <string name="notification_channel_description">Shown while PaperScreen is filtering your screen.</string>

@@ -30,9 +30,9 @@ class PaperSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ON_CHANGE, true)
         set(value) = prefs.edit().putBoolean(KEY_ON_CHANGE, value).apply()
 
-    var overlayPromptShown: Boolean
-        get() = prefs.getBoolean(KEY_OVERLAY_PROMPTED, false)
-        set(value) = prefs.edit().putBoolean(KEY_OVERLAY_PROMPTED, value).apply()
+    var servicePromptShown: Boolean
+        get() = prefs.getBoolean(KEY_SERVICE_PROMPTED, false)
+        set(value) = prefs.edit().putBoolean(KEY_SERVICE_PROMPTED, value).apply()
 
     fun filterParams() = EinkFilter.Params(warmth = warmth, contrast = contrast, greyLevels = greyLevels)
 
@@ -44,7 +44,7 @@ class PaperSettings(context: Context) {
         const val KEY_CONTRAST = "contrast"
         const val KEY_LEVELS = "grey_levels"
         const val KEY_ON_CHANGE = "refresh_on_change"
-        private const val KEY_OVERLAY_PROMPTED = "overlay_prompt_shown"
+        private const val KEY_SERVICE_PROMPTED = "service_prompt_shown"
 
         const val MIN_INTERVAL_MS = 200
         const val MAX_INTERVAL_MS = 2000

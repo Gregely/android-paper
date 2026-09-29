@@ -7,6 +7,6 @@ import android.content.Intent
 /** Handles the notification's "Stop" action. */
 class StopReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        PaperScreenService.stop(context)
+        PaperScreenAccessibilityService.stopCapture()
     }
 }

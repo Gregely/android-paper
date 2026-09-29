@@ -85,7 +85,7 @@
     <string name="home_remove_favourite">Remove</string>
     <string name="home_launch_failed">Couldn\'t open %1$s</string>
 
-    <string name="secure_app_message">Secure app — tap pause to view</string>
+    <string name="secure_app_message">Secure app — Tap here to pause for 5 mins</string>
 
     <string name="notification_channel">PaperScreen status</string>
     <string name="notification_channel_description">Shown while PaperScreen is filtering your screen, with buttons to pause or stop it.</string>

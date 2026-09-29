@@ -61,14 +61,15 @@ class WindowCapturer(
         }
     }
 
-
     /** A window to capture, from [AccessibilityService.getWindows]. */
     class Target(val windowId: Int, val layer: Int, val bounds: Rect)
 
     /** Read on [worker] for every processed frame. */
     @Volatile var filterParams: EinkFilter.Params? = null
 
-    private val executor = Executor { worker.post(it) }
+    // After release the worker is gone; run late screenshot callbacks inline so their
+    // buffers are still closed (the abandoned job just releases them).
+    private val executor = Executor { if (!worker.post(it)) it.run() }
     private val filter = EinkFilter()
     private val lastCaptureAt = HashMap<Int, Long>()
     private var pixels = IntArray(0)
@@ -76,7 +77,7 @@ class WindowCapturer(
     private val frameDiff = FrameDiff()
     private var epoch = 0
     private val failedPaint = Paint().apply { color = Color.BLACK }
-    private var activeSeq = NONE
+    @Volatile private var activeSeq = NONE
 
     private class Shot(val target: Target, val buffer: HardwareBuffer?, val colorSpace: ColorSpace?)
 
@@ -100,9 +101,6 @@ class WindowCapturer(
         }
         captureNext(Job(seq, targets.sortedBy { it.layer }, width, height))
     }
-
-    /** Abandons any capture in progress. */
-    fun cancel() = worker.post { activeSeq = NONE }
 
     /**
      * Forgets the frame on screen (the overlay was cleared), so the next update is a whole

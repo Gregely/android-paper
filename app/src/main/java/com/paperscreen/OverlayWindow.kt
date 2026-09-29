@@ -9,9 +9,7 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
-import android.graphics.RectF
 import android.os.SystemClock
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -105,20 +103,6 @@ class OverlayWindow(service: AccessibilityService) {
                 invalidate()
             }
 
-        private var message: String? = null
-        private val clearMessage = Runnable {
-            message = null
-            invalidate()
-        }
-        private val density = resources.displayMetrics.density
-        private val messagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 15f, resources.displayMetrics)
-            color = MESSAGE_TEXT
-            textAlign = Paint.Align.CENTER
-        }
-        private val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = MESSAGE_BACKGROUND }
-        private val pill = RectF()
-
         init {
             // Keep the overlay out of the accessibility events that drive "refresh on change".
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
@@ -149,17 +133,6 @@ class OverlayWindow(service: AccessibilityService) {
             invalidate()
         }
 
-        /**
-         * Shows a short message near the bottom of the overlay. System toasts sit below
-         * accessibility overlays, so they'd be hidden behind this opaque one.
-         */
-        fun showMessage(text: String, durationMs: Long) {
-            message = text
-            removeCallbacks(clearMessage)
-            postDelayed(clearMessage, durationMs)
-            invalidate()
-        }
-
         override fun onDraw(canvas: Canvas) {
             canvas.drawColor(blankColor)
             frame?.let { bitmap ->
@@ -173,7 +146,6 @@ class OverlayWindow(service: AccessibilityService) {
                 )
                 drawGhosts(canvas)
             }
-            message?.let { drawMessage(canvas, it) }
         }
 
         private fun drawGhosts(canvas: Canvas) {
@@ -196,19 +168,6 @@ class OverlayWindow(service: AccessibilityService) {
             }
             postInvalidateOnAnimation()
         }
-
-        private fun drawMessage(canvas: Canvas, text: String) {
-            val padH = 20 * density
-            val padV = 12 * density
-            val textWidth = messagePaint.measureText(text)
-            val metrics = messagePaint.fontMetrics
-            val textHeight = metrics.descent - metrics.ascent
-            val centerX = width / 2f
-            val bottom = height - 96 * density
-            pill.set(centerX - textWidth / 2 - padH, bottom - textHeight - 2 * padV, centerX + textWidth / 2 + padH, bottom)
-            canvas.drawRoundRect(pill, pill.height() / 2, pill.height() / 2, pillPaint)
-            canvas.drawText(text, centerX, pill.top + padV - metrics.ascent, messagePaint)
-        }
     }
 
     companion object {
@@ -221,8 +180,5 @@ class OverlayWindow(service: AccessibilityService) {
                 0f, 0f, 0f, 1f, 0f,
             ),
         )
-
-        private val MESSAGE_BACKGROUND = Color.rgb(0x2B, 0x2A, 0x28)
-        private val MESSAGE_TEXT = Color.rgb(0xF2, 0xEE, 0xE6)
     }
 }

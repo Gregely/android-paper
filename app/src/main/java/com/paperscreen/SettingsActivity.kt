@@ -56,6 +56,7 @@ class SettingsActivity : Activity() {
         settings = PaperSettings(this)
         preview = FilterPreview(this)
         startAfterServiceEnabled = savedInstanceState?.getBoolean(STATE_START_PENDING) ?: false
+        firstRunHomePrompt = savedInstanceState?.getBoolean(STATE_FIRST_RUN_HOME) ?: false
 
         serviceBanner = findViewById(R.id.permission_banner)
         masterSwitch = findViewById(R.id.master_switch)
@@ -66,6 +67,10 @@ class SettingsActivity : Activity() {
         contrastValue = findViewById(R.id.contrast_value)
         levelsValue = findViewById(R.id.levels_value)
         fullRefreshValue = findViewById(R.id.full_refresh_value)
+        // These mirror live state (is filtering on, is PaperScreen the launcher). Restoring a
+        // stale checked state after rotation would fire their listeners and start or stop things.
+        masterSwitch.isSaveEnabled = false
+        homeSwitch.isSaveEnabled = false
 
         findViewById<Button>(R.id.grant_button).setOnClickListener { openAccessibilitySettings() }
         masterSwitch.setOnCheckedChangeListener { _, checked ->
@@ -134,6 +139,7 @@ class SettingsActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(STATE_START_PENDING, startAfterServiceEnabled)
+        outState.putBoolean(STATE_FIRST_RUN_HOME, firstRunHomePrompt)
     }
 
     // --- Start flow: accessibility service → notification permission → start ------------
@@ -530,6 +536,7 @@ class SettingsActivity : Activity() {
         private const val REQUEST_HOME = 2
         private const val INSTANT_REFUSAL_MS = 500L
         private const val STATE_START_PENDING = "start_pending"
+        private const val STATE_FIRST_RUN_HOME = "first_run_home_prompt"
         private const val EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
         private const val EXTRA_SHOW_FRAGMENT_ARGS = ":settings:show_fragment_args"
     }

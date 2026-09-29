@@ -86,6 +86,14 @@ class PaperSettings(context: Context) {
         get() = prefs.getBoolean(KEY_CAPTURE_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_CAPTURE_ENABLED, value).apply()
 
+    /**
+     * When a "pause for 5 minutes" ends, as wall-clock time (0 when not paused). Saved so a
+     * pause survives the app's process being restarted.
+     */
+    var snoozeUntil: Long
+        get() = prefs.getLong(KEY_SNOOZE_UNTIL, 0L)
+        set(value) = prefs.edit().putLong(KEY_SNOOZE_UNTIL, value).apply()
+
     var notificationPromptShown: Boolean
         get() = prefs.getBoolean(KEY_NOTIFICATION_PROMPTED, false)
         set(value) = prefs.edit().putBoolean(KEY_NOTIFICATION_PROMPTED, value).apply()
@@ -155,6 +163,7 @@ class PaperSettings(context: Context) {
         const val KEY_FLASH_DURATION = "flash_duration_ms"
         private const val KEY_SERVICE_PROMPTED = "service_prompt_shown"
         private const val KEY_CAPTURE_ENABLED = "capture_enabled"
+        private const val KEY_SNOOZE_UNTIL = "snooze_until"
         private const val KEY_NOTIFICATION_PROMPTED = "notification_prompt_shown"
         private const val KEY_FAVOURITES = "home_favourites"
         private const val KEY_CLOCK_24H = "home_clock_24h"

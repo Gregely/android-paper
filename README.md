@@ -105,9 +105,13 @@ same code over a `PixelCopy` snapshot of its own window.
   them.
 - **Notification:** while filtering is on, a regular (not foreground-service) notification
   offers **Stop** and **Pause 5 min**. It goes away when filtering stops. Pausing hides the
-  overlay and brings it back after five minutes (sooner with **Resume**). If the phone sleeps
-  through the end of the pause, it resumes on the next unlock. On Android 14 the user can
-  swipe the notification away; filtering keeps running.
+  overlay and brings it back after five minutes (sooner with **Resume**). Pausing again
+  while paused, from the notification or the secure-app button, doesn't extend it. If the
+  phone sleeps through the end of the pause, it resumes on the next unlock. The pause is
+  saved, so it survives the app's process being restarted. If Android has restarted the
+  process and the service hasn't reconnected yet, the notification's buttons are recorded
+  and applied as soon as it does. On Android 14 the user can swipe the notification away;
+  filtering keeps running.
 - **Screen off / locked:** capture pauses and the overlay window is removed (accessibility
   overlays would otherwise cover the lock screen). On unlock, a fresh overlay window is
   created and shows a blank page until the first capture replaces it with a full refresh.
@@ -147,9 +151,11 @@ pre-tint isn't applied twice. It has two views.
   ranks prefix matches first, then word starts, then matches anywhere. **Go** on the
   keyboard opens the top result.
 - The **app list**: every launchable app, names only, under bold letter headings (A, B, C…).
-  Accented names go under their base letter, and names starting with digits or symbols
-  under `#` at the end. While searching, the headings and index step aside for the ranked
-  results.
+  Headings come from Android's ICU `AlphabeticIndex` for the phone's language (plus Latin
+  A–Z), as in contacts apps. Accented names go under their base letter, other alphabets
+  under their own letters, and Chinese or Japanese names under the index the language
+  defines. Names starting with digits, symbols or emoji go under `#` at the end. While
+  searching, the headings and index step aside for the ranked results.
 - An **A–Z index** down the right edge, like a contacts app. Tap a letter, or slide along
   it, to jump to that section. Its letters shrink to fit when the keyboard is up.
 
@@ -221,11 +227,14 @@ This is a prototype of per-window capture. These gaps come from what the platfor
 
 - **Secure windows are black.** `FLAG_SECURE` windows (banking apps, DRM video) can't be
   captured, and their bounds are filled black. Because the overlay is opaque, the app
-  underneath can't be seen, though taps still reach it. When a capture hits a secure
-  window, the overlay shows a short "Secure app — tap pause to view" message. The system
-  reports these windows by an error code, so no black-pixel guessing is involved. **Pause
-  5 min** in the notification uncovers the app. The message is drawn on the overlay itself:
-  a system toast would sit underneath the opaque overlay and never be seen.
+  underneath can't be seen, though taps still reach it. When a capture hits a secure window
+  (the system reports it by an error code, so there's no black-pixel guessing), a button
+  appears near the bottom of the screen for six seconds: **"Secure app — Tap here to pause
+  for 5 mins"**. Tapping it does exactly what the notification's **Pause 5 min** does. The
+  main overlay passes every touch through, so the button is its own small, touchable
+  accessibility-overlay window (`SecurePill`). Taps around it still reach the app. It's
+  never captured, and it sits clear of the notification shade's pull-down area. (A system
+  toast would sit underneath the opaque overlay and never be seen.)
 - **Only reported windows appear.** `getWindows()` leaves out the wallpaper (replaced by
   plain paper), non-touchable windows such as toasts and the gesture-navigation handle, and
   windows completely covered by others. When a modal dialog is open, the app behind it may be

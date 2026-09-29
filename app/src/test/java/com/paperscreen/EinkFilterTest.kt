@@ -1,7 +1,6 @@
 package com.paperscreen
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -66,23 +65,15 @@ class EinkFilterTest {
     }
 
     @Test
-    fun rgbaAndArgbPathsAgree() {
-        val filter = EinkFilter().apply { setParams(EinkFilter.Params(20, 50, 16)) }
-        // The same colour, #3366CC, in both memory layouts.
-        val rgba = intArrayOf(0xFFCC6633.toInt())
-        val argb = intArrayOf(0xFF3366CC.toInt())
-        filter.applyToRgba(rgba, 1)
-        filter.applyToArgb(argb, 1)
-        assertEquals(argb[0], rgba[0])
-    }
-
-    @Test
-    fun checksumTracksContent() {
-        val filter = EinkFilter().apply { setParams(EinkFilter.Params(20, 50, 16)) }
-        val a = filter.applyToArgb(intArrayOf(0xFF000000.toInt(), 0xFFFFFFFF.toInt()), 2)
-        val b = filter.applyToArgb(intArrayOf(0xFF000000.toInt(), 0xFFFFFFFF.toInt()), 2)
-        val c = filter.applyToArgb(intArrayOf(0xFFFFFFFF.toInt(), 0xFF000000.toInt()), 2)
-        assertEquals(a, b)
-        assertNotEquals(a, c)
+    fun appliesTheTableToEachPixelByLuma() {
+        val params = EinkFilter.Params(20, 50, 16)
+        val filter = EinkFilter().apply { setParams(params) }
+        val pixels = intArrayOf(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 0xFF3366CC.toInt())
+        filter.applyToArgb(pixels, pixels.size)
+        val table = lut(warmth = 20)
+        assertEquals(table[0], pixels[0])
+        assertEquals(table[255], pixels[1])
+        // #3366CC: luma (0x33*54 + 0x66*183 + 0xCC*19) / 256 = 98.
+        assertEquals(table[98], pixels[2])
     }
 }

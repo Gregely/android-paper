@@ -12,6 +12,7 @@ import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -34,7 +35,6 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
-import java.util.Collections
 import java.util.Date
 import java.util.Locale
 
@@ -79,6 +79,17 @@ class HomeActivity : Activity() {
     private var font = HomeFont.DEFAULT
     private var showSeconds = false
 
+    /** The replace/add picker, if open; dismissed when going home or on destroy. */
+    private var picker: AlertDialog? = null
+
+    /** A favourite is being dragged; app-list refreshes wait until it's dropped. */
+    private var dragging = false
+    private var refreshAfterDrag = false
+    private var resumed = false
+
+    /** Locale-aware letter buckets for the drawer (handles accents and non-Latin scripts). */
+    private val sectionKeys by lazy { LocaleSectionKeys(Locale.getDefault()) }
+
     private val timeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) = updateClock()
     }
@@ -122,7 +133,8 @@ class HomeActivity : Activity() {
 
         catalog = AppCatalog(this) {
             refreshDrawer()
-            renderFavourites()
+            // An uninstalled favourite disappears straight away, unless one is mid-drag.
+            if (dragging) refreshAfterDrag = true else renderFavourites()
         }
         catalog.start()
     }
@@ -136,29 +148,35 @@ class HomeActivity : Activity() {
             addAction(Intent.ACTION_LOCALE_CHANGED)
         }
         registerReceiver(timeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        // Warmth and the home screen settings may have changed while we were away. This also
+        // restarts the clock's tick, which runs whenever the page is visible (even unfocused,
+        // as in split screen).
+        applyColors()
+        applyHomeStyle()
+        if (dragging) refreshAfterDrag = true else renderFavourites()
     }
 
     override fun onResume() {
         super.onResume()
-        // Warmth and the home screen settings may have changed while we were away.
-        applyColors()
-        applyHomeStyle()
-        renderFavourites()
+        resumed = true
     }
 
     override fun onPause() {
-        main.removeCallbacks(secondTick)
+        resumed = false
         super.onPause()
     }
 
     override fun onStop() {
         unregisterReceiver(timeReceiver)
+        main.removeCallbacks(secondTick)
         // Coming back home (from an app, or the screen turning on) always shows the home page.
         closeDrawer()
         super.onStop()
     }
 
     override fun onDestroy() {
+        picker?.dismiss()
+        main.removeCallbacks(secondTick)
         catalog.stop()
         super.onDestroy()
     }
@@ -166,6 +184,7 @@ class HomeActivity : Activity() {
     /** The home button: back to the home page. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        picker?.dismiss()
         closeDrawer()
     }
 
@@ -230,22 +249,31 @@ class HomeActivity : Activity() {
      */
     private fun pickApp(replacing: Int?) {
         val apps = catalog.apps
+        if (apps.isEmpty()) return
+        picker?.dismiss()
         val adapter = DrawerAdapter().apply { submitPlain(apps) }
         val builder = AlertDialog.Builder(this)
             .setTitle(if (replacing == null) R.string.home_add_favourite_title else R.string.home_pick_favourite)
             .setAdapter(adapter) { _, which ->
                 val chosen = apps[which].component.flattenToString()
                 updateFavourites { favourites ->
-                    if (replacing == null) favourites += chosen else favourites[replacing] = chosen
+                    when {
+                        replacing == null || replacing >= favourites.size -> favourites += chosen
+                        else -> favourites[replacing] = chosen
+                    }
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
         if (replacing != null) {
             builder.setNeutralButton(R.string.home_remove_favourite) { _, _ ->
-                updateFavourites { it.removeAt(replacing) }
+                updateFavourites { if (replacing < it.size) it.removeAt(replacing) }
             }
         }
-        builder.show()
+        picker = builder.show().also { dialog ->
+            // The same warmth-tinted page as the home screen, not the default dialog white.
+            dialog.window?.setBackgroundDrawable(ColorDrawable(paper))
+            dialog.setOnDismissListener { if (picker === dialog) picker = null }
+        }
     }
 
     /** Edits the live favourites (uninstalled ones are dropped on save) and redraws. */
@@ -274,9 +302,13 @@ class HomeActivity : Activity() {
         /** Rebinds every row in place after a font or colour change. */
         fun restyle() = notifyItemRangeChanged(0, itemCount)
 
-        /** Moves a favourite while it's being dragged; saved when the drag ends. */
+        /**
+         * Moves a favourite while it's being dragged; saved when the drag ends. A fast drag can
+         * jump several rows at once, so this shifts the rows in between (as the animation
+         * shows) rather than swapping two.
+         */
         fun move(from: Int, to: Int) {
-            Collections.swap(apps, from, to)
+            apps.add(to, apps.removeAt(from))
             notifyItemMoved(from, to)
         }
 
@@ -329,9 +361,11 @@ class HomeActivity : Activity() {
             viewHolder: RecyclerView.ViewHolder,
             target: RecyclerView.ViewHolder,
         ): Boolean {
+            val from = viewHolder.bindingAdapterPosition
             val to = target.bindingAdapterPosition
+            if (from == RecyclerView.NO_POSITION || to == RecyclerView.NO_POSITION) return false
             if (favouritesAdapter.isAddRow(to)) return false // "+ Add app" stays last.
-            favouritesAdapter.move(viewHolder.bindingAdapterPosition, to)
+            favouritesAdapter.move(from, to)
             moved = true
             return true
         }
@@ -341,6 +375,7 @@ class HomeActivity : Activity() {
         override fun onSelectedChanged(viewHolder: RecyclerView.ViewHolder?, actionState: Int) {
             if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && viewHolder != null) {
                 moved = false
+                dragging = true
                 viewHolder.itemView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             }
         }
@@ -348,13 +383,21 @@ class HomeActivity : Activity() {
         override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
             viewHolder.itemView.translationX = 0f
             viewHolder.itemView.translationY = 0f
+            dragging = false
             if (moved) {
                 settings.favourites = favouritesAdapter.apps.map { it.component.flattenToString() }
-            } else {
+            } else if (resumed) {
+                // A long-press released in place (not one interrupted by leaving the screen).
                 val position = viewHolder.bindingAdapterPosition
-                if (position != RecyclerView.NO_POSITION) pickApp(replacing = position)
+                if (position != RecyclerView.NO_POSITION && !favouritesAdapter.isAddRow(position)) {
+                    pickApp(replacing = position)
+                }
             }
             moved = false
+            if (refreshAfterDrag) {
+                refreshAfterDrag = false
+                recyclerView.post { renderFavourites() }
+            }
         }
 
         /** Just follow the finger: no lift, shadow or scaling. */
@@ -409,7 +452,7 @@ class HomeActivity : Activity() {
     private fun refreshDrawer() {
         val query = search.text.toString()
         if (query.isBlank()) {
-            val sections = AppSections.build(catalog.apps) { it.label }
+            val sections = AppSections.build(catalog.apps, { it.label }, sectionKeys::key)
             drawerAdapter.submitSections(sections)
             index.letters = sections.map { it.letter }
             index.visibility = View.VISIBLE
@@ -422,6 +465,9 @@ class HomeActivity : Activity() {
     private fun launch(app: AppCatalog.App) {
         try {
             launcherApps.startMainActivity(app.component, app.user, null, null)
+            // Back to the home page (search cleared) even if the app doesn't fully cover us,
+            // as with translucent or floating apps, where onStop never comes.
+            closeDrawer()
             hideKeyboard()
         } catch (e: RuntimeException) {
             Toast.makeText(this, getString(R.string.home_launch_failed, app.label), Toast.LENGTH_SHORT).show()

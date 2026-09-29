@@ -25,6 +25,7 @@ class AppCatalog(context: Context, private val onChanged: (List<App>) -> Unit) {
     private val main = Handler(Looper.getMainLooper())
     private val loader = Executors.newSingleThreadExecutor()
     private var generation = 0
+    private var stopped = false
 
     var apps: List<App> = emptyList()
         private set
@@ -45,6 +46,7 @@ class AppCatalog(context: Context, private val onChanged: (List<App>) -> Unit) {
     }
 
     fun stop() {
+        stopped = true
         launcherApps.unregisterCallback(callback)
         loader.shutdownNow()
     }
@@ -55,16 +57,21 @@ class AppCatalog(context: Context, private val onChanged: (List<App>) -> Unit) {
     }
 
     fun reload() {
+        if (stopped) return
         val current = ++generation
         loader.execute {
             val collator = Collator.getInstance().apply { strength = Collator.PRIMARY }
             // Only activities with a launcher entry are listed: PaperScreen's settings, not
             // the home screen itself.
-            val loaded = launcherApps.getActivityList(null, Process.myUserHandle())
-                .map { App(it.label.toString(), it.componentName, it.user) }
-                .sortedWith { a, b -> collator.compare(a.label, b.label) }
+            val loaded = try {
+                launcherApps.getActivityList(null, Process.myUserHandle())
+                    .map { App(it.label.toString(), it.componentName, it.user) }
+                    .sortedWith { a, b -> collator.compare(a.label, b.label) }
+            } catch (e: RuntimeException) {
+                return@execute // Keep the current list; the next change callback retries.
+            }
             main.post {
-                if (current != generation) return@post
+                if (stopped || current != generation) return@post
                 apps = loaded
                 onChanged(loaded)
             }

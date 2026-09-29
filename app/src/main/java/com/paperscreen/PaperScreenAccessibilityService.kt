@@ -68,6 +68,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private var workerThread: HandlerThread? = null
     private var capturer: WindowCapturer? = null
     private var overlay: OverlayWindow? = null
+    private var securePill: SecurePill? = null
 
     private var phase = Phase.PAUSED
     /** Incremented whenever an in-flight refresh must be abandoned. */
@@ -183,6 +184,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
 
         capturing = true
         phase = Phase.PAUSED
+        restoreSnooze()
         if (isScreenUsable() && !resume()) {
             stopCapture()
             return false
@@ -260,8 +262,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     override fun onFrameProcessed(seq: Int, update: WindowCapturer.Update?, secureWindow: Boolean) {
         if (seq != this.seq || phase != Phase.CAPTURING) return
         noteSecureWindow(secureWindow)
-        val view = overlay?.view ?: return
-        if (update == null || update.epoch != frameEpoch) {
+        val view = overlay?.view
+        if (view == null || update == null || update.epoch != frameEpoch) {
             finishRefresh(changed = false)
             return
         }
@@ -338,10 +340,14 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         if (!refreshOnChange || changedDuringCapture) requestRefresh()
     }
 
-    /** Lets the user know why part of the screen is black, once per secure-app visit. */
+    /**
+     * Once per secure-app visit, explains the black box with a pill that pauses filtering
+     * (exactly like the notification's Pause button) when tapped.
+     */
     private fun noteSecureWindow(present: Boolean) {
-        if (present && !secureNoticeShown) {
-            overlay?.view?.showMessage(getString(R.string.secure_app_message), SECURE_MESSAGE_MS)
+        if (present && !secureNoticeShown && overlay != null) {
+            val pill = securePill ?: SecurePill(this) { snooze() }.also { securePill = it }
+            pill.show(settings.warmth, SECURE_MESSAGE_MS)
         }
         secureNoticeShown = present
     }
@@ -428,15 +434,31 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     }
 
     private fun hideOverlay() {
+        securePill?.hide()
         overlay?.detach()
         overlay = null
     }
 
+    /**
+     * Pauses filtering for five minutes. Idempotent: pausing again while paused (from the
+     * notification and the secure-app pill, say) doesn't extend the pause.
+     */
     private fun snooze() {
-        if (!isCapturing) return
-        snoozedUntil = SystemClock.elapsedRealtime() + SNOOZE_MS
+        if (!isCapturing || isSnoozed) return
+        settings.snoozeUntil = System.currentTimeMillis() + SNOOZE_MS
+        startSnooze(SNOOZE_MS)
+    }
+
+    /** Picks up a pause saved before the process was restarted, if it hasn't run out. */
+    private fun restoreSnooze() {
+        val remaining = settings.snoozeUntil - System.currentTimeMillis()
+        if (remaining > 0) startSnooze(remaining) else settings.snoozeUntil = 0L
+    }
+
+    private fun startSnooze(durationMs: Long) {
+        snoozedUntil = SystemClock.elapsedRealtime() + durationMs
         main.removeCallbacks(endSnoozeRunnable)
-        main.postDelayed(endSnoozeRunnable, SNOOZE_MS)
+        main.postDelayed(endSnoozeRunnable, durationMs)
         pause()
         updateNotification()
         notifyState()
@@ -452,6 +474,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
 
     private fun clearSnooze() {
         snoozedUntil = 0L
+        settings.snoozeUntil = 0L
         main.removeCallbacks(endSnoozeRunnable)
     }
 
@@ -590,7 +613,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         private const val MIN_BACKOFF_MS = 250L
         private const val MAX_BACKOFF_MS = 1_000L
         private const val SNOOZE_MS = 5 * 60 * 1_000L
-        private const val SECURE_MESSAGE_MS = 3_000L
+        private const val SECURE_MESSAGE_MS = 6_000L
 
         private const val CHANNEL_ID = "paperscreen"
         private const val NOTIFICATION_ID = 1
@@ -639,7 +662,23 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         /** Handles a notification button. */
         fun onNotificationAction(context: Context, action: String?) {
             val service = instance
-            if (service == null || !service.isCapturing) {
+            if (service == null) {
+                // The process was restarted (e.g. after a long sleep) and the service hasn't
+                // reconnected yet. Record the choice; the service reads it when it connects.
+                val settings = PaperSettings(context)
+                when (action) {
+                    ACTION_STOP -> {
+                        settings.captureEnabled = false
+                        context.getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+                    }
+                    ACTION_SNOOZE -> if (settings.snoozeUntil <= System.currentTimeMillis()) {
+                        settings.snoozeUntil = System.currentTimeMillis() + SNOOZE_MS
+                    }
+                    ACTION_RESUME -> settings.snoozeUntil = 0L
+                }
+                return
+            }
+            if (!service.isCapturing) {
                 // Left over from an earlier session.
                 context.getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
                 return

@@ -28,39 +28,16 @@ class EinkFilter {
         built = params
     }
 
-    /**
-     * Filters pixels read as little-endian ints from an RGBA_8888 buffer (0xAABBGGRR), writing
-     * ARGB ints (0xAARRGGBB) back in place. Returns a checksum of the output.
-     */
-    fun applyToRgba(pixels: IntArray, count: Int): Long {
+    /** Filters ARGB pixels (as from [android.graphics.Bitmap.getPixels]) in place. */
+    fun applyToArgb(pixels: IntArray, count: Int) {
         val lut = lut
-        var hash = 1L
-        for (i in 0 until count) {
-            val v = pixels[i]
-            val r = v and 0xFF
-            val g = (v ushr 8) and 0xFF
-            val b = (v ushr 16) and 0xFF
-            val out = lut[(r * LUMA_R + g * LUMA_G + b * LUMA_B) ushr 8]
-            pixels[i] = out
-            hash = hash * HASH_PRIME + out
-        }
-        return hash
-    }
-
-    /** Same as [applyToRgba] for ARGB ints, as returned by [android.graphics.Bitmap.getPixels]. */
-    fun applyToArgb(pixels: IntArray, count: Int): Long {
-        val lut = lut
-        var hash = 1L
         for (i in 0 until count) {
             val v = pixels[i]
             val r = (v ushr 16) and 0xFF
             val g = (v ushr 8) and 0xFF
             val b = v and 0xFF
-            val out = lut[(r * LUMA_R + g * LUMA_G + b * LUMA_B) ushr 8]
-            pixels[i] = out
-            hash = hash * HASH_PRIME + out
+            pixels[i] = lut[(r * LUMA_R + g * LUMA_G + b * LUMA_B) ushr 8]
         }
-        return hash
     }
 
     companion object {
@@ -68,8 +45,6 @@ class EinkFilter {
         private const val LUMA_R = 54
         private const val LUMA_G = 183
         private const val LUMA_B = 19
-
-        private const val HASH_PRIME = 1_000_003L
 
         // Contrast 0 → washed out, 50 → e-ink's soft 30/225, 100 → full 0/255.
         fun inkLevel(contrast: Int): Int = lerp(60f, 0f, contrast / 100f).roundToInt()

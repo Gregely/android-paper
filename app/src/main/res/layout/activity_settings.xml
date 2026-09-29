@@ -171,6 +171,29 @@
                 android:id="@+id/levels_seek"
                 style="@style/Slider" />
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/SectionLabel"
+                    android:labelFor="@id/full_refresh_seek"
+                    android:text="@string/full_refresh_every" />
+
+                <TextView
+                    android:id="@+id/full_refresh_value"
+                    style="@style/SectionValue" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/Hint"
+                android:text="@string/full_refresh_hint" />
+
+            <SeekBar
+                android:id="@+id/full_refresh_seek"
+                style="@style/Slider" />
+
             <Switch
                 android:id="@+id/on_change_switch"
                 android:layout_width="match_parent"

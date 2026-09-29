@@ -30,10 +30,22 @@ class PaperSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ON_CHANGE, true)
         set(value) = prefs.edit().putBoolean(KEY_ON_CHANGE, value).apply()
 
+    /** How many partial refreshes happen between full (inverted) refreshes. */
+    var fullRefreshEvery: Int
+        get() = prefs.getInt(KEY_FULL_REFRESH_EVERY, DEFAULT_FULL_REFRESH_EVERY)
+            .coerceIn(MIN_FULL_REFRESH_EVERY, MAX_FULL_REFRESH_EVERY)
+        set(value) = prefs.edit()
+            .putInt(KEY_FULL_REFRESH_EVERY, value.coerceIn(MIN_FULL_REFRESH_EVERY, MAX_FULL_REFRESH_EVERY))
+            .apply()
+
     /** Whether filtering is on; restored when the accessibility service reconnects. */
     var captureEnabled: Boolean
         get() = prefs.getBoolean(KEY_CAPTURE_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_CAPTURE_ENABLED, value).apply()
+
+    var notificationPromptShown: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFICATION_PROMPTED, false)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFICATION_PROMPTED, value).apply()
 
     var servicePromptShown: Boolean
         get() = prefs.getBoolean(KEY_SERVICE_PROMPTED, false)
@@ -49,8 +61,10 @@ class PaperSettings(context: Context) {
         const val KEY_CONTRAST = "contrast"
         const val KEY_LEVELS = "grey_levels"
         const val KEY_ON_CHANGE = "refresh_on_change"
+        const val KEY_FULL_REFRESH_EVERY = "full_refresh_every"
         private const val KEY_SERVICE_PROMPTED = "service_prompt_shown"
         private const val KEY_CAPTURE_ENABLED = "capture_enabled"
+        private const val KEY_NOTIFICATION_PROMPTED = "notification_prompt_shown"
 
         const val MIN_INTERVAL_MS = 200
         const val MAX_INTERVAL_MS = 2000
@@ -63,5 +77,9 @@ class PaperSettings(context: Context) {
         const val MIN_LEVELS = 4
         const val MAX_LEVELS = 32
         const val DEFAULT_LEVELS = 16
+
+        const val MIN_FULL_REFRESH_EVERY = 10
+        const val MAX_FULL_REFRESH_EVERY = 100
+        const val DEFAULT_FULL_REFRESH_EVERY = 50
     }
 }

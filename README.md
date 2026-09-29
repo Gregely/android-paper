@@ -31,17 +31,23 @@ The same service rebuilds the screen underneath from per-window screenshots.
 layers. Unlike a whole-screen capture, it never includes the overlay, so the overlay stays
 opaque the whole time.
 
-Each refresh is one page turn (`PaperScreenAccessibilityService.beginRefresh`):
+Each refresh (`PaperScreenAccessibilityService.beginRefresh`):
 
-1. **Flash.** The overlay turns flat `#C8C8C8`.
-2. **Capture, in the background.** `getWindows()` lists the visible windows (accessibility
-   overlays excluded). `WindowCapturer` screenshots them one at a time and composites them
-   bottom-up in layer order over plain white. The wallpaper isn't one of the reported windows,
-   and the filter turns white into the paper colour. The composite is built on the GPU and
-   read back once.
-3. **Show.** The composite is filtered on the worker thread and replaces the flash, no sooner
-   than 80 ms after it started. It is drawn 1:1 in screen pixels and stays frozen until the
-   next refresh.
+1. **Capture, in the background.** The overlay keeps showing the current frame.
+   `getWindows()` lists the visible windows (accessibility overlays excluded).
+   `WindowCapturer` screenshots them one at a time and composites them bottom-up in layer
+   order over plain white. The wallpaper isn't one of the reported windows, and the filter
+   turns white into the paper colour. The composite is built on the GPU and read back once,
+   then filtered.
+2. **Diff.** `FrameDiff` compares the filtered frame with the one on screen and returns only
+   the rows that changed, as bands from the leftmost to the rightmost changed pixel.
+3. **Update**, as one of two kinds of refresh:
+   - **Partial refresh** (usual): the changed bands are written into the frame on screen in
+     place. There's no flash or transition, and pixels that didn't change are never touched.
+   - **Full refresh** (every *N* partial refreshes; 10–100, default 50): the new frame is
+     shown with inverted colours for ~80 ms, then normally. This mimics e-ink's
+     ghosting-clear cycle. The first frame after starting, unlocking or rotating is always a
+     full refresh; until it arrives, the overlay shows a blank page in the paper colour.
 
 Window screenshots cover the window's whole surface. The only position the API reports is
 the bounds of the window's touchable region. `WindowPlacement` lines the two up: exact bounds
@@ -57,7 +63,7 @@ time and each waits out its own interval. In practice the fastest refresh is abo
 refreshes are triggered by accessibility events that usually mean something visible changed:
 content or window changes, scrolling, text edits, clicks and notifications. It still refreshes
 at most once per interval. If refreshes keep finding nothing new, change-triggered refreshes
-back off (up to one extra second) so a noisy app can't keep the screen flashing.
+back off (up to one extra second) so a noisy app can't keep capturing.
 
 ### The filter (`EinkFilter`)
 
@@ -72,19 +78,26 @@ and each pixel costs one table lookup:
 | Warmth | Per-channel tint from cool blue-grey (0) to sepia/amber (100). Default 20 |
 
 A `ColorMatrix` can't express posterization, so the filter uses a lookup table, which is
-exact and cheap on the CPU. The settings screen's **Hold to preview** runs the
+exact and cheap on the CPU. The settings screen's **Hold to preview** (shown with the full-refresh inversion) runs the
 same code over a `PixelCopy` snapshot of its own window.
 
 ### Lifecycle
 
-- **On/off:** the master toggle starts and stops filtering; nothing else is asked for. The
-  choice is remembered, so filtering resumes by itself when the service reconnects (e.g.
-  after a reboot). Turning the accessibility service off also turns filtering off.
+- **On/off:** the master toggle starts and stops filtering. The choice is remembered, so
+  filtering resumes by itself when the service reconnects (e.g. after a reboot). Turning the
+  accessibility service off also turns filtering off. All settings are saved as you change
+  them.
+- **Notification:** while filtering is on, a regular (not foreground-service) notification
+  offers **Stop** and **Pause 5 min**. It goes away when filtering stops. Pausing hides the
+  overlay and brings it back after five minutes (sooner with **Resume**). If the phone sleeps
+  through the end of the pause, it resumes on the next unlock. On Android 14 the user can
+  swipe the notification away; filtering keeps running.
 - **Screen off / locked:** capture pauses and the overlay hides (accessibility overlays would
   otherwise cover the lock screen). On unlock (`ACTION_USER_PRESENT`) the overlay comes back
-  as the grey flash, and the first capture replaces it.
-- **Rotation / resolution change:** a `DisplayListener` resizes the overlay, shows the flash
-  in place of the stale frame, and refreshes once the rotation animation is done.
+  as a blank page, and the first capture replaces it with a full refresh.
+- **Rotation / resolution change:** a `DisplayListener` resizes the overlay, shows a blank
+  page in place of the stale frame, and does a full refresh once the rotation animation is
+  done.
 
 ## Building
 
@@ -92,7 +105,7 @@ Requirements: JDK 17+ and an Android SDK with platform 34.
 
 ```sh
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest    # EinkFilter and WindowPlacement unit tests
+./gradlew testDebugUnitTest    # EinkFilter, FrameDiff and WindowPlacement unit tests
 ```
 
 - `minSdk`/`targetSdk`/`compileSdk` 34, Gradle Kotlin DSL, AGP 8.10, Kotlin 2.1.
@@ -100,9 +113,11 @@ Requirements: JDK 17+ and an Android SDK with platform 34.
 
 ## Permissions and setup
 
-The app declares no runtime permissions. Everything goes through its accessibility service,
-which the user turns on in **Settings → Accessibility**. The app explains this on first
-launch and links there. Its service config asks for:
+The only runtime permission is `POST_NOTIFICATIONS`, for the Stop / Pause notification. It's
+asked for once, the first time filtering is turned on, and filtering works without it.
+Everything else goes through the accessibility service, which the user turns on in
+**Settings → Accessibility**. The app explains this on first launch and links there. Its
+service config asks for:
 
 | Capability | Why |
 |---|---|
@@ -122,9 +137,12 @@ out. Open **App info → PaperScreen → ⋮ → Allow restricted settings**, th
 This is a prototype of per-window capture. These gaps come from what the platform reports:
 
 - **Secure windows are black.** `FLAG_SECURE` windows (banking apps, DRM video) can't be
-  captured, and their bounds are filled black. Because the overlay is opaque, **the app
-  underneath can't be seen at all**, though taps still reach it. Turn PaperScreen off to use
-  such apps.
+  captured, and their bounds are filled black. Because the overlay is opaque, the app
+  underneath can't be seen, though taps still reach it. When a capture hits a secure
+  window, the overlay shows a short "Secure app — tap pause to view" message. The system
+  reports these windows by an error code, so no black-pixel guessing is involved. **Pause
+  5 min** in the notification uncovers the app. The message is drawn on the overlay itself:
+  a system toast would sit underneath the opaque overlay and never be seen.
 - **Only reported windows appear.** `getWindows()` leaves out the wallpaper (replaced by
   plain paper), non-touchable windows such as toasts and the gesture-navigation handle, and
   windows completely covered by others. When a modal dialog is open, the app behind it may be

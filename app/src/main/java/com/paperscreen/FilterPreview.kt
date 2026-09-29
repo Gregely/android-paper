@@ -2,21 +2,20 @@ package com.paperscreen
 
 import android.app.Activity
 import android.graphics.Bitmap
+import android.graphics.ColorMatrixColorFilter
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
-import android.os.SystemClock
 import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
-import kotlin.math.max
 
 /**
  * "Hold to preview": snapshots the activity's own window, runs it through the same
- * [EinkFilter] the service uses, and lays the result over the window (with the page-turn
- * flash) until [end] is called.
+ * [EinkFilter] the service uses, and lays the result over the window (with the full-refresh
+ * inversion) until [end] is called.
  */
 class FilterPreview(private val activity: Activity) {
 
@@ -26,7 +25,6 @@ class FilterPreview(private val activity: Activity) {
     private val filter = EinkFilter() // Worker thread only.
 
     private var cover: ImageView? = null
-    private var flashStart = 0L
     /** Incremented on every begin/end so late callbacks from an old preview are ignored. */
     private var token = 0
 
@@ -40,7 +38,6 @@ class FilterPreview(private val activity: Activity) {
         val snapshot = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         PixelCopy.request(activity.window, snapshot, { result ->
             if (result != PixelCopy.SUCCESS) return@request
-            main.post { if (current == token) showFlash() }
             val pixels = IntArray(width * height)
             snapshot.getPixels(pixels, 0, width, 0, 0, width, height)
             filter.setParams(params)
@@ -61,26 +58,23 @@ class FilterPreview(private val activity: Activity) {
         workerThread.quitSafely()
     }
 
-    private fun showFlash() {
+    /** Shows the filtered snapshot the way a full refresh does: inverted briefly, then normal. */
+    private fun showFiltered(bitmap: Bitmap, current: Int) {
         if (cover != null) return
         val view = ImageView(activity).apply {
             scaleType = ImageView.ScaleType.FIT_XY
-            setBackgroundColor(OverlayWindow.FLASH_COLOR)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             translationZ = 1000f
+            setImageBitmap(bitmap)
+            colorFilter = ColorMatrixColorFilter(OverlayWindow.INVERT)
         }
         (activity.window.decorView as ViewGroup).addView(
             view,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
         )
         cover = view
-        flashStart = SystemClock.uptimeMillis()
-    }
-
-    private fun showFiltered(bitmap: Bitmap, current: Int) {
-        val remaining = max(0L, flashStart + OverlayWindow.FLASH_MS - SystemClock.uptimeMillis())
         main.postDelayed({
-            if (current == token) cover?.setImageBitmap(bitmap)
-        }, remaining)
+            if (current == token) view.colorFilter = null
+        }, OverlayWindow.INVERT_MS)
     }
 }

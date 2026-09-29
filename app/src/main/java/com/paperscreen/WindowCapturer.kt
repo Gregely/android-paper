@@ -19,6 +19,8 @@ import java.util.concurrent.Executor
  * which records only that window's own layers, so the overlay is never in the picture and
  * never has to get out of the way. The shots are composited bottom-up over blank paper (the
  * wallpaper isn't one of the reported windows) on the GPU, read back once, and filtered.
+ * The filtered frame is then diffed against what the overlay shows, and only the rows that
+ * changed are handed over as [FrameDiff.Band]s, so static areas are never touched.
  *
  * Windows are captured one at a time. The system refuses a second capture of the same window
  * within 333 ms, so each capture first waits out that window's interval. A window that can't
@@ -35,14 +37,30 @@ class WindowCapturer(
 ) {
 
     interface Listener {
-        /** Capture [seq] is filtered. [frame] is null when it is identical to [displayed]. */
-        fun onFrameProcessed(seq: Int, frame: Frame?)
+        /**
+         * Capture [seq] is filtered. [update] holds the pixels that differ from the frame on
+         * screen, or is null when nothing changed. [secureWindow] is true when a window
+         * refused capture because it is FLAG_SECURE.
+         */
+        fun onFrameProcessed(seq: Int, update: Update?, secureWindow: Boolean)
 
         /** Capture [seq] produced nothing usable (no windows reported, or an error). */
         fun onCaptureFailed(seq: Int)
     }
 
-    class Frame(val bitmap: Bitmap, val checksum: Long)
+    /**
+     * The changes that turn the frame on screen into the new one. After a [reset] the first
+     * update covers the whole [width]×[height] frame.
+     */
+    class Update(val epoch: Int, val width: Int, val height: Int, val bands: List<FrameDiff.Band>) {
+        /** Writes the changes into [bitmap], which must hold the previous frame. */
+        fun applyTo(bitmap: Bitmap) {
+            for (band in bands) {
+                bitmap.setPixels(band.pixels, 0, band.width, band.left, band.top, band.width, band.height)
+            }
+        }
+    }
+
 
     /** A window to capture, from [AccessibilityService.getWindows]. */
     class Target(val windowId: Int, val layer: Int, val bounds: Rect)
@@ -50,14 +68,13 @@ class WindowCapturer(
     /** Read on [worker] for every processed frame. */
     @Volatile var filterParams: EinkFilter.Params? = null
 
-    /** The frame the overlay currently shows; never written to and used to detect no-op refreshes. */
-    @Volatile var displayed: Frame? = null
-
     private val executor = Executor { worker.post(it) }
     private val filter = EinkFilter()
     private val lastCaptureAt = HashMap<Int, Long>()
     private var pixels = IntArray(0)
-    private val buffers = arrayOfNulls<Bitmap>(2)
+
+    private val frameDiff = FrameDiff()
+    private var epoch = 0
     private val failedPaint = Paint().apply { color = Color.BLACK }
     private var activeSeq = NONE
 
@@ -66,6 +83,7 @@ class WindowCapturer(
     private class Job(val seq: Int, val targets: List<Target>, val width: Int, val height: Int) {
         val shots = ArrayList<Shot>(targets.size)
         var retried = false
+        var sawSecureWindow = false
 
         fun release() {
             shots.forEach { it.buffer?.close() }
@@ -86,10 +104,20 @@ class WindowCapturer(
     /** Abandons any capture in progress. */
     fun cancel() = worker.post { activeSeq = NONE }
 
+    /**
+     * Forgets the frame on screen (the overlay was cleared), so the next update is a whole
+     * frame tagged with [newEpoch]. Also abandons any capture in progress.
+     */
+    fun reset(newEpoch: Int) = worker.post {
+        activeSeq = NONE
+        epoch = newEpoch
+        frameDiff.reset()
+    }
+
     fun release() = worker.post {
         activeSeq = NONE
-        buffers.fill(null)
         pixels = IntArray(0)
+        frameDiff.reset()
         lastCaptureAt.clear()
     }
 
@@ -143,6 +171,9 @@ class WindowCapturer(
                     captureNext(job)
                     return
                 }
+                if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) {
+                    job.sawSecureWindow = true
+                }
                 job.shots += Shot(target, null, null) // Secure window, gone, or an error.
                 captureNext(job)
             }
@@ -182,14 +213,14 @@ class WindowCapturer(
             // Window shots are hardware bitmaps, so this composites on the GPU and reads back once.
             val composite = Bitmap.createBitmap(picture, width, height, Bitmap.Config.ARGB_8888)
             job.release()
-            process(composite, seq)
+            process(composite, seq, job.sawSecureWindow)
         } catch (e: RuntimeException) {
             job.release()
             main.post { listener.onCaptureFailed(seq) }
         }
     }
 
-    private fun process(composite: Bitmap, seq: Int) {
+    private fun process(composite: Bitmap, seq: Int, secure: Boolean) {
         val width = composite.width
         val height = composite.height
         val count = width * height
@@ -198,35 +229,9 @@ class WindowCapturer(
         composite.recycle()
 
         filterParams?.let(filter::setParams)
-        val checksum = filter.applyToArgb(pixels, count) * 31 + (width.toLong() shl 20) + height
-        val shown = displayed
-        if (shown != null && shown.checksum == checksum) {
-            main.post { listener.onFrameProcessed(seq, null) }
-            return
-        }
-        val bitmap = backBuffer(width, height, shown?.bitmap)
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
-        val frame = Frame(bitmap, checksum)
-        main.post { listener.onFrameProcessed(seq, frame) }
-    }
-
-    /** A bitmap of the right size that the overlay is not currently drawing. */
-    private fun backBuffer(width: Int, height: Int, inUse: Bitmap?): Bitmap {
-        for (i in buffers.indices) {
-            var bitmap = buffers[i]
-            if (bitmap != null && (bitmap.width != width || bitmap.height != height)) {
-                bitmap = null
-                buffers[i] = null
-            }
-            if (bitmap != null && bitmap === inUse) continue
-            if (bitmap == null) {
-                bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                bitmap.setHasAlpha(false)
-                buffers[i] = bitmap
-            }
-            return bitmap
-        }
-        error("unreachable: at most one buffer can be in use")
+        filter.applyToArgb(pixels, count)
+        val update = frameDiff.diff(pixels, width, height)?.let { Update(epoch, width, height, it) }
+        main.post { listener.onFrameProcessed(seq, update, secure) }
     }
 
     private companion object {

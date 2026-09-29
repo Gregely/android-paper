@@ -6,6 +6,7 @@
     <string name="master_toggle">PaperScreen</string>
     <string name="status_running">On — the screen refreshes like paper</string>
     <string name="status_stopped">Off</string>
+    <string name="status_snoozed">Paused for a few minutes — turns back on by itself</string>
 
     <string name="service_missing">Turn on the PaperScreen accessibility service to use PaperScreen.</string>
     <string name="grant">Set up</string>
@@ -19,8 +20,14 @@
     <string name="contrast_value">%1$d · ink %2$d / paper %3$d</string>
     <string name="grey_levels">Grey levels</string>
     <string name="grey_levels_value">%1$d</string>
+    <string name="full_refresh_every">Full refresh every</string>
+    <plurals name="full_refresh_every_value">
+        <item quantity="one">%1$d refresh</item>
+        <item quantity="other">%1$d refreshes</item>
+    </plurals>
+    <string name="full_refresh_hint">Partial refreshes only redraw what changed. Every so often, a full refresh flashes the screen inverted to clear leftovers, like an e-ink panel.</string>
     <string name="refresh_on_change">Refresh only when the screen changes</string>
-    <string name="refresh_on_change_hint">Skips the page-turn while nothing on screen is moving. Turn off to refresh on every interval.</string>
+    <string name="refresh_on_change_hint">Only captures the screen when apps report a change. Turn off to capture on every interval, which also catches video and games.</string>
     <string name="hold_to_preview">Hold to preview</string>
     <string name="preview_hint">Applies the current filter to this screen while held.</string>
 
@@ -31,7 +38,18 @@
     <string name="not_now">Not now</string>
     <string name="start_failed">Couldn\'t start PaperScreen. Make sure its accessibility service is on, then try again.</string>
 
+    <string name="secure_app_message">Secure app — tap pause to view</string>
+
+    <string name="notification_channel">PaperScreen status</string>
+    <string name="notification_channel_description">Shown while PaperScreen is filtering your screen, with buttons to pause or stop it.</string>
+    <string name="notification_title">PaperScreen is on</string>
+    <string name="notification_text">Tap to adjust</string>
+    <string name="notification_snoozed">Paused until %1$s</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_snooze">Pause 5 min</string>
+    <string name="action_resume">Resume</string>
+
     <string name="accessibility_summary">Shows your screen in e-ink style</string>
-    <string name="accessibility_description">PaperScreen redraws your screen in the style of an e-ink display, with a paper-like grey page turn on each refresh. It uses this service to draw a full-screen overlay that your taps pass through, and to take a screenshot of each window underneath it, which it filters and shows on the overlay. It reads the window list only to know what to capture, and doesn\'t read or change anything inside apps. Captures stay on your phone.</string>
+    <string name="accessibility_description">PaperScreen redraws your screen in the style of an e-ink display, redrawing only what changes and occasionally clearing the screen with a full refresh. It uses this service to draw a full-screen overlay that your taps pass through, and to take a screenshot of each window underneath it, which it filters and shows on the overlay. It reads the window list only to know what to capture, and doesn\'t read or change anything inside apps. Captures stay on your phone.</string>
 
 </resources>

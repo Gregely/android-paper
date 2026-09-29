@@ -79,6 +79,9 @@ class EinkFilter {
         private val COOL = floatArrayOf(0.96f, 0.99f, 1.04f)
         private val AMBER = floatArrayOf(1.08f, 0.96f, 0.72f)
 
+        /** The colour white maps to: a blank page. */
+        fun paperColor(params: Params): Int = IntArray(256).also { buildLut(params, it) }[255]
+
         fun buildLut(params: Params, out: IntArray) {
             require(out.size == 256)
             val steps = (params.greyLevels.coerceIn(2, 256) - 1).toFloat()

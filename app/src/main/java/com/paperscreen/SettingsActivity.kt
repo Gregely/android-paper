@@ -1,10 +1,12 @@
 package com.paperscreen
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.Settings
 import android.view.MotionEvent
@@ -27,6 +29,7 @@ class SettingsActivity : Activity() {
     private lateinit var warmthValue: TextView
     private lateinit var contrastValue: TextView
     private lateinit var levelsValue: TextView
+    private lateinit var fullRefreshValue: TextView
 
     /** Suppresses switch listeners while the UI is being synced to state. */
     private var syncingUi = false
@@ -50,6 +53,7 @@ class SettingsActivity : Activity() {
         warmthValue = findViewById(R.id.warmth_value)
         contrastValue = findViewById(R.id.contrast_value)
         levelsValue = findViewById(R.id.levels_value)
+        fullRefreshValue = findViewById(R.id.full_refresh_value)
 
         findViewById<Button>(R.id.grant_button).setOnClickListener { openAccessibilitySettings() }
         masterSwitch.setOnCheckedChangeListener { _, checked ->
@@ -102,16 +106,33 @@ class SettingsActivity : Activity() {
         outState.putBoolean(STATE_START_PENDING, startAfterServiceEnabled)
     }
 
-    // --- Start flow: accessibility service → start -------------------------------------
+    // --- Start flow: accessibility service → notification permission → start ------------
 
     private fun beginStart() {
-        if (PaperScreenAccessibilityService.state == PaperScreenAccessibilityService.State.RUNNING) return
+        if (isOn(PaperScreenAccessibilityService.state)) return
         if (!isServiceEnabled()) {
             startAfterServiceEnabled = true
             showServiceDialog()
             render()
             return
         }
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+            !settings.notificationPromptShown
+        ) {
+            // Asked once: filtering works without it, only the Stop / Pause notification is lost.
+            settings.notificationPromptShown = true
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+            return
+        }
+        start()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_NOTIFICATIONS) start()
+    }
+
+    private fun start() {
         if (!PaperScreenAccessibilityService.startCapture()) {
             Toast.makeText(this, R.string.start_failed, Toast.LENGTH_LONG).show()
         }
@@ -161,13 +182,23 @@ class SettingsActivity : Activity() {
     // --- Controls ------------------------------------------------------------------------
 
     private fun render() {
-        val running = PaperScreenAccessibilityService.state == PaperScreenAccessibilityService.State.RUNNING
+        val state = PaperScreenAccessibilityService.state
         serviceBanner.visibility = if (isServiceEnabled()) View.GONE else View.VISIBLE
         syncingUi = true
-        masterSwitch.isChecked = running
+        masterSwitch.isChecked = isOn(state)
         syncingUi = false
-        statusText.setText(if (running) R.string.status_running else R.string.status_stopped)
+        statusText.setText(
+            when (state) {
+                PaperScreenAccessibilityService.State.RUNNING -> R.string.status_running
+                PaperScreenAccessibilityService.State.SNOOZED -> R.string.status_snoozed
+                else -> R.string.status_stopped
+            },
+        )
     }
+
+    private fun isOn(state: PaperScreenAccessibilityService.State) =
+        state == PaperScreenAccessibilityService.State.RUNNING ||
+            state == PaperScreenAccessibilityService.State.SNOOZED
 
     private fun setUpSliders() {
         val step = PaperSettings.INTERVAL_STEP_MS
@@ -207,6 +238,14 @@ class SettingsActivity : Activity() {
             initial = settings.greyLevels,
             save = { settings.greyLevels = it },
             render = { levelsValue.text = getString(R.string.grey_levels_value, it) },
+        )
+        bindSlider(
+            R.id.full_refresh_seek,
+            min = PaperSettings.MIN_FULL_REFRESH_EVERY,
+            max = PaperSettings.MAX_FULL_REFRESH_EVERY,
+            initial = settings.fullRefreshEvery,
+            save = { settings.fullRefreshEvery = it },
+            render = { fullRefreshValue.text = resources.getQuantityString(R.plurals.full_refresh_every_value, it, it) },
         )
     }
 
@@ -256,6 +295,7 @@ class SettingsActivity : Activity() {
     }
 
     companion object {
+        private const val REQUEST_NOTIFICATIONS = 1
         private const val STATE_START_PENDING = "start_pending"
         private const val EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
         private const val EXTRA_SHOW_FRAGMENT_ARGS = ":settings:show_fragment_args"

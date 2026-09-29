@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PaperScreen</string>
+    <string name="tagline">An e-ink look for your OLED screen</string>
+
+    <string name="master_toggle">PaperScreen</string>
+    <string name="status_running">On — the screen refreshes like paper</string>
+    <string name="status_stopped">Off</string>
+
+    <string name="overlay_missing">PaperScreen needs permission to draw over other apps.</string>
+    <string name="grant">Grant</string>
+
+    <string name="refresh_interval">Refresh interval</string>
+    <string name="refresh_interval_value">%1$d ms</string>
+    <string name="warmth">Warmth</string>
+    <string name="warmth_value">%1$d</string>
+    <string name="warmth_hint">Cool grey ↔ warm amber</string>
+    <string name="contrast">Contrast</string>
+    <string name="contrast_value">%1$d · ink %2$d / paper %3$d</string>
+    <string name="grey_levels">Grey levels</string>
+    <string name="grey_levels_value">%1$d</string>
+    <string name="refresh_on_change">Refresh only when the screen changes</string>
+    <string name="refresh_on_change_hint">Skips the page-turn while nothing on screen is moving. Turn off to refresh on every interval.</string>
+    <string name="hold_to_preview">Hold to preview</string>
+    <string name="preview_hint">Applies the current filter to this screen while held.</string>
+
+    <string name="overlay_dialog_title">Allow display over other apps</string>
+    <string name="overlay_dialog_message">PaperScreen draws a filtered copy of your screen on top of other apps. On the next screen, find PaperScreen and turn on \"Allow display over other apps\", then come back.</string>
+    <string name="open_settings">Open settings</string>
+    <string name="not_now">Not now</string>
+    <string name="capture_denied">Screen capture permission is needed to run PaperScreen.</string>
+    <string name="overlay_failed">Couldn\'t show the overlay. Check the \"display over other apps\" permission.</string>
+
+    <string name="notification_channel">PaperScreen status</string>
+    <string name="notification_channel_description">Shown while PaperScreen is filtering your screen.</string>
+    <string name="notification_title">PaperScreen is on</string>
+    <string name="notification_text">Every %1$d ms · tap to adjust</string>
+    <string name="notification_text_on_change">Refreshes on change, at most every %1$d ms · tap to adjust</string>
+    <string name="notification_paused">Paused while the screen is off or locked</string>
+    <string name="action_stop">Stop</string>
+</resources>

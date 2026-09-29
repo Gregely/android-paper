@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="24dp"
+        android:paddingTop="32dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="32dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="serif"
+            android:text="@string/app_name"
+            android:textColor="@color/ink"
+            android:textSize="32sp" />
+
+        <TextView
+            style="@style/Hint"
+            android:layout_marginTop="4dp"
+            android:text="@string/tagline"
+            android:textSize="15sp" />
+
+        <!-- Shown only while the overlay permission is missing. -->
+        <LinearLayout
+            android:id="@+id/permission_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:background="@drawable/warning_background"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/overlay_missing"
+                android:textColor="@color/ink"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/grant_button"
+                style="@android:style/Widget.Material.Button.Borderless.Colored"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/grant" />
+        </LinearLayout>
+
+        <!-- Master toggle -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:background="@drawable/card_background"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <Switch
+                android:id="@+id/master_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/master_toggle"
+                android:textColor="@color/ink"
+                android:textSize="20sp" />
+
+            <TextView
+                android:id="@+id/status_text"
+                style="@style/Hint"
+                android:layout_marginTop="4dp"
+                android:text="@string/status_stopped" />
+        </LinearLayout>
+
+        <!-- Filter & timing -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/card_background"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingTop="20dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="4dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/SectionLabel"
+                    android:labelFor="@id/interval_seek"
+                    android:text="@string/refresh_interval" />
+
+                <TextView
+                    android:id="@+id/interval_value"
+                    style="@style/SectionValue" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/interval_seek"
+                style="@style/Slider" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/SectionLabel"
+                    android:labelFor="@id/warmth_seek"
+                    android:text="@string/warmth" />
+
+                <TextView
+                    android:id="@+id/warmth_value"
+                    style="@style/SectionValue" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/Hint"
+                android:text="@string/warmth_hint" />
+
+            <SeekBar
+                android:id="@+id/warmth_seek"
+                style="@style/Slider" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/SectionLabel"
+                    android:labelFor="@id/contrast_seek"
+                    android:text="@string/contrast" />
+
+                <TextView
+                    android:id="@+id/contrast_value"
+                    style="@style/SectionValue" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/contrast_seek"
+                style="@style/Slider" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/SectionLabel"
+                    android:labelFor="@id/levels_seek"
+                    android:text="@string/grey_levels" />
+
+                <TextView
+                    android:id="@+id/levels_value"
+                    style="@style/SectionValue" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/levels_seek"
+                style="@style/Slider" />
+
+            <Switch
+                android:id="@+id/on_change_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/refresh_on_change"
+                android:textColor="@color/ink"
+                android:textSize="16sp" />
+
+            <TextView
+                style="@style/Hint"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="16dp"
+                android:text="@string/refresh_on_change_hint" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/preview_button"
+            style="@android:style/Widget.Material.Button.Colored"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:layout_marginTop="24dp"
+            android:text="@string/hold_to_preview"
+            android:textSize="16sp" />
+
+        <TextView
+            style="@style/Hint"
+            android:layout_marginTop="8dp"
+            android:gravity="center_horizontal"
+            android:text="@string/preview_hint" />
+    </LinearLayout>
+</ScrollView>

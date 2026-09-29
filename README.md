@@ -146,7 +146,7 @@ same code over a `PixelCopy` snapshot of its own window.
 - **Notification:** while filtering is on, a regular (not foreground-service) notification
   offers **Stop** and **Pause 5 min**. It goes away when filtering stops. Pausing hides the
   overlay and brings it back after five minutes (sooner with **Resume**). Pausing again
-  while paused, from the notification or the secure-app button, doesn't extend it. If the
+  while paused doesn't extend it. If the
   phone sleeps through the end of the pause, it resumes on the next unlock. The pause is
   saved, so it survives the app's process being restarted. If Android has restarted the
   process and the service hasn't reconnected yet, the notification's buttons are recorded
@@ -158,11 +158,28 @@ same code over a `PixelCopy` snapshot of its own window.
 - **Unlock grace period:** the lock screen and its unlock transition are `FLAG_SECURE`, so
   the first captures after unlocking would look like a secure app. For 1.5 seconds from
   whichever comes first of the screen turning on and the unlock, a capture that meets a
-  secure window is dropped (the frame on screen is left alone) and retried 150 ms later, and
-  the secure-app button isn't shown. No full refresh happens in that window either. One
+  secure window is dropped (the frame on screen is left alone) and retried 150 ms later,
+  rather than treated as a secure app. No full refresh happens in that window either. One
   that's due waits for the next capture after it. If the grace period has already run out at
   unlock (for example, while a PIN was being typed), the unlock starts it again. A real
-  secure app that's still open afterwards is handled as usual.
+  secure app that's still open afterwards is handled as usual (see below). If a secure app
+  was already up when the screen went off, the overlay stays away after unlocking until
+  the secure app has gone, without repeating the notice.
+- **Secure apps:** `FLAG_SECURE` windows (banking apps, password managers, some video apps)
+  can't be captured. The system reports this with an error code, so there's no guessing
+  from black pixels. When a capture meets one, it's dropped, and the overlay steps aside by
+  itself, so the app shows normally (unfiltered). A small notice, **"Secure app detected —
+  overlay paused"**, appears near the bottom of the screen for two seconds, in dark grey on
+  the warmth-tinted paper colour with rounded corners. It's drawn by PaperScreen
+  (`SecureNotice`, its own accessibility-overlay window), so it shows with the overlay
+  gone. It's purely informational: it isn't touchable, and taps go straight to the app.
+  While the secure app is up, PaperScreen checks about twice a second, and on every window
+  change, whether any window is still secure. The window that was secure is tried first,
+  and for it the answer comes back at once. Nothing is composited or shown. Once no window
+  is secure (you switched to another app, or went home), the overlay comes back by itself on
+  a blank page. The first capture waits 500 ms, so the secure app's closing animation isn't
+  caught in it, and it's a plain refresh, without the full-refresh flash. To turn filtering
+  off for other reasons, there's still **Pause 5 min** in the notification.
   Resuming doesn't rely on the `ACTION_USER_PRESENT` broadcast alone: display-state changes
   and the accessibility events that follow an unlock also check "screen on, unlocked, should
   be filtering" and bring the overlay back.
@@ -287,16 +304,9 @@ out. Open **App info → PaperScreen → ⋮ → Allow restricted settings**, th
 
 This is a prototype of per-window capture. These gaps come from what the platform reports:
 
-- **Secure windows are black.** `FLAG_SECURE` windows (banking apps, DRM video) can't be
-  captured, and their bounds are filled black. Because the overlay is opaque, the app
-  underneath can't be seen, though taps still reach it. When a capture hits a secure window
-  (the system reports it by an error code, so there's no black-pixel guessing), a button
-  appears near the bottom of the screen for six seconds: **"Secure app — Tap here to pause
-  for 5 mins"**. Tapping it does exactly what the notification's **Pause 5 min** does. The
-  main overlay passes every touch through, so the button is its own small, touchable
-  accessibility-overlay window (`SecurePill`). Taps around it still reach the app. It's
-  never captured, and it sits clear of the notification shade's pull-down area. (A system
-  toast would sit underneath the opaque overlay and never be seen.)
+- **Secure apps aren't filtered.** They can't be captured, so the overlay steps aside while
+  one is on screen (see *Lifecycle*). That includes a secure window that's only part of the
+  screen, such as a secure dialog: the whole overlay steps aside, not just that area.
 - **Only reported windows appear.** `getWindows()` leaves out the wallpaper (replaced by
   plain paper), non-touchable windows such as toasts and the gesture-navigation handle, and
   windows completely covered by others. When a modal dialog is open, the app behind it may be

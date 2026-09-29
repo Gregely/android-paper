@@ -49,13 +49,21 @@ import kotlin.math.min
  * Refreshes happen every interval, or — with "refresh on change" — when accessibility events
  * report that something on screen changed, at most once per interval. Capture pauses while
  * the screen is off or locked, and can be paused for five minutes from the notification.
+ *
+ * Secure apps (FLAG_SECURE) can't be captured. When a capture meets one, the overlay steps
+ * aside on its own with a brief notice, and comes back once no window is secure any more.
  */
 class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.Listener {
 
     /** What the settings screen can do with the service. */
     enum class State { DISABLED, READY, RUNNING, SNOOZED }
 
-    private enum class Phase { PAUSED, IDLE, CAPTURING }
+    /**
+     * PAUSED: no overlay (screen off, locked, snoozed, or stopped). IDLE / CAPTURING: the
+     * overlay is up, between refreshes or during one. SECURE: a secure app is on screen, so
+     * there's no overlay; probes watch for it to go.
+     */
+    private enum class Phase { PAUSED, IDLE, CAPTURING, SECURE }
 
     private val main = Handler(Looper.getMainLooper())
     private lateinit var settings: PaperSettings
@@ -68,7 +76,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private var workerThread: HandlerThread? = null
     private var capturer: WindowCapturer? = null
     private var overlay: OverlayWindow? = null
-    private var securePill: SecurePill? = null
+    private var secureNotice: SecureNotice? = null
 
     private var phase = Phase.PAUSED
     /** Incremented whenever an in-flight refresh must be abandoned. */
@@ -92,19 +100,30 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
      */
     private var backoffMs = 0L
 
-    /** A secure window was seen in the last capture (so the message isn't repeated). */
-    private var secureNoticeShown = false
-
     /**
      * Just after the screen turns on or unlocks, the lock screen and its transition windows
-     * are FLAG_SECURE, so captures look like a secure app. Until this time (uptime), captures
-     * that hit a secure window are dropped and the secure-app pill isn't shown.
+     * are FLAG_SECURE, so captures look like a secure app. Until this time (uptime), a capture
+     * that meets a secure window is simply retried, rather than pausing for a secure app.
      */
     private var graceUntil = 0L
     private var captureInGrace = false
 
+    /** The first frame after a secure app is a plain one, without the full-refresh flash. */
+    private var quietFirstFrame = false
+
+    /** While [Phase.SECURE]: a probe is running, or when the next one is due (uptime). */
+    private var probing = false
+    private var probeAt = NOT_SCHEDULED
+    private val probeRunnable = Runnable {
+        probeAt = NOT_SCHEDULED
+        beginProbe()
+    }
+
     /** Paused because the screen went off: the frame is kept, so unlocking is a partial refresh. */
     private var pausedForScreenOff = false
+
+    /** Paused while a secure app was up: on resuming, check for it before showing the overlay. */
+    private var pausedInSecure = false
 
     /** The filter settings last handed to the capturer (warmth changes with Night warmth). */
     private var appliedParams: EinkFilter.Params? = null
@@ -153,7 +172,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         // Unlocking produces window events too, so this doubles as a safety net for resuming.
         resumeIfDue()
         // The config only subscribes to event types that usually mean something visible changed.
-        if (isCapturing && refreshOnChange) onContentChanged()
+        // While a secure app is up, any event (switching apps, say) is worth a look.
+        if (isCapturing && (refreshOnChange || phase == Phase.SECURE)) onContentChanged()
     }
 
     override fun onInterrupt() = Unit
@@ -203,6 +223,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
 
         capturing = true
         phase = Phase.PAUSED
+        pausedInSecure = false
+        quietFirstFrame = false
         restoreSnooze()
         if (isScreenUsable() && !resume()) {
             stopCapture()
@@ -221,6 +243,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         phase = Phase.PAUSED
         seq++
         cancelScheduledRefresh()
+        cancelProbe()
         clearSnooze()
         main.removeCallbacks(warmthTick)
         appliedParams = null
@@ -228,6 +251,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         displayManager.unregisterDisplayListener(displayListener)
         unregisterReceiver(screenReceiver)
         hideOverlay()
+        secureNotice?.hide()
         capturer?.release()
         capturer = null
         workerThread?.quitSafely()
@@ -268,7 +292,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         changedDuringCapture = false
         lastRefreshStart = SystemClock.uptimeMillis()
         captureInGrace = lastRefreshStart < graceUntil
-        cap.capture(refresh, captureTargets(), geometry.width, geometry.height, rejectSecure = captureInGrace)
+        cap.capture(refresh, captureTargets(), geometry.width, geometry.height)
     }
 
     /** Every reported window except accessibility overlays (ours included, if it were listed). */
@@ -281,11 +305,12 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
                 WindowCapturer.Target(info.id, info.layer, bounds)
             }
 
-    override fun onFrameProcessed(seq: Int, update: WindowCapturer.Update?, secureWindow: Boolean) {
+    override fun onFrameProcessed(seq: Int, update: WindowCapturer.Update?) {
         val current = seq == this.seq && phase == Phase.CAPTURING
-        // Just after unlocking, no forced full refresh: the first good frame is a partial one,
-        // and a due full refresh waits for the next capture after the grace period.
-        val fullDue = fullRefresh && !captureInGrace && partialsSinceFull >= fullRefreshEvery
+        // Just after unlocking or a secure app, no forced full refresh: the first good frame is
+        // a plain one, and a due full refresh waits for the next capture.
+        val quiet = captureInGrace || quietFirstFrame
+        val fullDue = fullRefresh && !quiet && partialsSinceFull >= fullRefreshEvery
         // The capturer has already recorded this frame as the one on screen, so it's written
         // into the frame even when the refresh itself was abandoned (e.g. the screen went off
         // mid-capture); otherwise the next diff would be taken against pixels never shown.
@@ -296,14 +321,14 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
             if (applied != null) overlay?.view?.frameChanged()
             return
         }
-        if (!captureInGrace) noteSecureWindow(secureWindow)
         val view = overlay?.view
         if (view == null || applied == null) {
             finishRefresh(changed = false)
             return
         }
+        if (applied != null) quietFirstFrame = false
         // With full refreshes off, even the first frame just replaces the blank page.
-        val full = fullDue || (fullRefresh && applied.firstFrame && !captureInGrace)
+        val full = fullDue || (fullRefresh && applied.firstFrame && !quiet)
         logUpdate(update, full)
 
         if (full) {
@@ -362,23 +387,53 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         )
     }
 
-    /** Just unlocked and the lock screen was still in the capture: try again shortly. */
+    /** A capture or probe met a secure window. */
     override fun onCaptureRejected(seq: Int) {
-        if (seq != this.seq || phase != Phase.CAPTURING) return
-        phase = Phase.IDLE
-        requestRefresh(GRACE_RETRY_MS)
+        if (seq != this.seq) return
+        when (phase) {
+            Phase.CAPTURING -> if (captureInGrace) {
+                // Just unlocked, and the lock screen was still in the capture: try again.
+                phase = Phase.IDLE
+                requestRefresh(GRACE_RETRY_MS)
+            } else {
+                enterSecure()
+            }
+            Phase.SECURE -> {
+                // Still there; keep watching.
+                probing = false
+                requestProbe(PROBE_INTERVAL_MS)
+            }
+            else -> Unit
+        }
     }
 
     override fun onCaptureFailed(seq: Int) {
-        if (seq != this.seq || phase != Phase.CAPTURING) return
-        finishRefresh(changed = false)
-        if (frameBitmap == null) requestRefresh() // Still on the blank page; keep trying.
+        if (seq != this.seq) return
+        when (phase) {
+            Phase.CAPTURING -> {
+                finishRefresh(changed = false)
+                if (frameBitmap == null) requestRefresh() // Still on the blank page; keep trying.
+            }
+            Phase.SECURE -> {
+                probing = false
+                requestProbe(PROBE_INTERVAL_MS)
+            }
+            else -> Unit
+        }
+    }
+
+    /** A probe found no secure window: the secure app has gone. */
+    override fun onProbeClear(seq: Int) {
+        if (seq != this.seq || phase != Phase.SECURE) return
+        probing = false
+        exitSecure()
     }
 
     private fun onContentChanged() {
         when (phase) {
             Phase.IDLE -> requestRefresh()
             Phase.CAPTURING -> changedDuringCapture = true
+            Phase.SECURE -> requestProbe(EVENT_PROBE_DELAY_MS)
             Phase.PAUSED -> Unit
         }
     }
@@ -389,16 +444,62 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         if (!refreshOnChange || changedDuringCapture) requestRefresh()
     }
 
+    // --- Secure apps ---------------------------------------------------------------------
+
     /**
-     * Once per secure-app visit, explains the black box with a pill that pauses filtering
-     * (exactly like the notification's Pause button) when tapped.
+     * A secure app is on screen. Its window can't be captured, so rather than cover it with a
+     * black box, the overlay steps aside (with a brief notice) until it has gone. The frame
+     * is dropped too: by the time the overlay is back it would be stale.
      */
-    private fun noteSecureWindow(present: Boolean) {
-        if (present && !secureNoticeShown && overlay != null) {
-            val pill = securePill ?: SecurePill(this) { snooze() }.also { securePill = it }
-            pill.show(settings.effectiveWarmth(), SECURE_MESSAGE_MS)
+    private fun enterSecure() {
+        clearFrame()
+        phase = Phase.SECURE
+        hideOverlay()
+        val notice = secureNotice ?: SecureNotice(this).also { secureNotice = it }
+        notice.show(settings.effectiveWarmth(), settings.homeFont.typeface(), SECURE_NOTICE_MS)
+        requestProbe(PROBE_INTERVAL_MS)
+        Log.i(TAG, "secure app: overlay paused")
+    }
+
+    /**
+     * The secure app has gone (another app, or home). The overlay comes back on a blank page,
+     * and the first capture waits a moment so the secure app's closing animation isn't in it.
+     */
+    private fun exitSecure() {
+        cancelProbe()
+        geometry = DisplayGeometry.of(display)
+        if (!showOverlay()) {
+            requestProbe(PROBE_INTERVAL_MS) // Try again on the next probe.
+            return
         }
-        secureNoticeShown = present
+        secureNotice?.hide()
+        phase = Phase.IDLE
+        quietFirstFrame = true
+        requestRefresh(SECURE_COOLDOWN_MS)
+        Log.i(TAG, "secure app gone: overlay back")
+    }
+
+    /** Schedules a probe [delayMs] from now, unless one is already due sooner or running. */
+    private fun requestProbe(delayMs: Long) {
+        if (phase != Phase.SECURE || probing) return
+        val at = SystemClock.uptimeMillis() + delayMs
+        if (probeAt != NOT_SCHEDULED && probeAt <= at) return
+        main.removeCallbacks(probeRunnable)
+        main.postAtTime(probeRunnable, at)
+        probeAt = at
+    }
+
+    private fun beginProbe() {
+        if (phase != Phase.SECURE || probing) return
+        val cap = capturer ?: return
+        probing = true
+        cap.probe(++seq, captureTargets())
+    }
+
+    private fun cancelProbe() {
+        main.removeCallbacks(probeRunnable)
+        probeAt = NOT_SCHEDULED
+        probing = false
     }
 
     /**
@@ -424,7 +525,10 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
      */
     private fun pause(keepFrame: Boolean = false) {
         if (phase == Phase.PAUSED) return
+        pausedInSecure = phase == Phase.SECURE
         phase = Phase.PAUSED
+        cancelProbe()
+        secureNotice?.hide()
         pausedForScreenOff = keepFrame
         if (keepFrame) {
             seq++
@@ -439,10 +543,19 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     /** Shows a fresh overlay (a blank page) and schedules the first capture. */
     private fun resume(): Boolean {
         if (!capturing || phase != Phase.PAUSED || isSnoozed) return true
+        if (pausedInSecure) {
+            // The secure app is probably still there (or the lock screen, just as secure):
+            // keep the overlay away until a probe finds neither, without repeating the notice.
+            pausedInSecure = false
+            pausedForScreenOff = false
+            phase = Phase.SECURE
+            requestProbe(RESUME_DELAY_MS)
+            Log.i(TAG, "resumed into a secure app: overlay stays paused")
+            return true
+        }
         geometry = DisplayGeometry.of(display)
         if (!showOverlay()) return false
         phase = Phase.IDLE
-        secureNoticeShown = false
         // Coming back from the screen being off: the lock screen may still be in the first
         // captures (in case the screen-on/unlock broadcasts were late or missed).
         if (pausedForScreenOff) startGrace()
@@ -527,14 +640,13 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     }
 
     private fun hideOverlay() {
-        securePill?.hide()
         overlay?.detach()
         overlay = null
     }
 
     /**
-     * Pauses filtering for five minutes. Idempotent: pausing again while paused (from the
-     * notification and the secure-app pill, say) doesn't extend the pause.
+     * Pauses filtering for five minutes. Idempotent: pausing again while paused doesn't
+     * extend the pause.
      */
     private fun snooze() {
         if (!isCapturing || isSnoozed) return
@@ -580,7 +692,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         // The old frame no longer lines up with anything, including one kept while the
         // screen was off.
         clearFrame()
-        if (phase == Phase.PAUSED) return
+        // With no overlay up (paused, or a secure app), the next resume starts afresh anyway.
+        if (phase == Phase.PAUSED || phase == Phase.SECURE) return
         phase = Phase.IDLE
         requestRefresh(ROTATION_DELAY_MS)
     }
@@ -717,7 +830,12 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         private const val MIN_BACKOFF_MS = 250L
         private const val MAX_BACKOFF_MS = 1_000L
         private const val SNOOZE_MS = 5 * 60 * 1_000L
-        private const val SECURE_MESSAGE_MS = 6_000L
+        private const val SECURE_NOTICE_MS = 2_000L
+        /** After a secure app: how long the overlay waits before its first capture. */
+        private const val SECURE_COOLDOWN_MS = 500L
+        /** While a secure app is up: how often to check whether it's still there. */
+        private const val PROBE_INTERVAL_MS = 500L
+        private const val EVENT_PROBE_DELAY_MS = 100L
         private const val GRACE_MS = 1_500L
         private const val GRACE_RETRY_MS = 150L
 

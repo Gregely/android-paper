@@ -132,7 +132,7 @@
     <string name="home_app_info_failed">Couldn\'t open app info for %1$s</string>
     <string name="home_launch_failed">Couldn\'t open %1$s</string>
 
-    <string name="secure_app_message">Secure app — Tap here to pause for 5 mins</string>
+    <string name="secure_app_notice">Secure app detected — overlay paused</string>
 
     <string name="notification_channel">PaperScreen status</string>
     <string name="notification_channel_description">Shown while PaperScreen is filtering your screen, with buttons to pause or stop it.</string>

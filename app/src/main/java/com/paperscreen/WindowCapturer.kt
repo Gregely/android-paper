@@ -23,8 +23,12 @@ import java.util.concurrent.Executor
  * changed are handed over as [FrameDiff.Band]s, so static areas are never touched.
  *
  * Windows are captured one at a time. The system refuses a second capture of the same window
- * within 333 ms, so each capture first waits out that window's interval. A window that can't
- * be captured (FLAG_SECURE, error, timeout) is left as a black box over its bounds.
+ * within 333 ms, so each capture first waits out that window's interval. A capture that meets
+ * a FLAG_SECURE window stops there and is dropped ([Listener.onCaptureRejected]); a window
+ * that fails for any other reason (error, timeout) is left as a black box over its bounds.
+ *
+ * [probe] asks only "is any window secure right now?", without compositing anything, so the
+ * service can tell when a secure app has gone.
  *
  * Public methods may be called from any thread; all state lives on [worker]. Listener
  * callbacks are delivered on [main].
@@ -39,19 +43,21 @@ class WindowCapturer(
     interface Listener {
         /**
          * Capture [seq] is filtered. [update] holds the pixels that differ from the frame on
-         * screen, or is null when nothing changed. [secureWindow] is true when a window
-         * refused capture because it is FLAG_SECURE.
+         * screen, or is null when nothing changed.
          */
-        fun onFrameProcessed(seq: Int, update: Update?, secureWindow: Boolean)
+        fun onFrameProcessed(seq: Int, update: Update?)
 
-        /** Capture [seq] produced nothing usable (no windows reported, or an error). */
+        /** Capture or probe [seq] produced nothing usable (no windows reported, or an error). */
         fun onCaptureFailed(seq: Int)
 
         /**
-         * Capture [seq] hit a secure window while secure captures were being rejected (just
-         * after unlocking). Nothing was diffed; the frame on screen is unchanged.
+         * Capture or probe [seq] met a FLAG_SECURE window. Nothing was diffed; the frame on
+         * screen is unchanged.
          */
         fun onCaptureRejected(seq: Int)
+
+        /** Probe [seq] found no secure window. */
+        fun onProbeClear(seq: Int)
     }
 
     /**
@@ -85,6 +91,9 @@ class WindowCapturer(
     private val failedPaint = Paint().apply { color = Color.BLACK }
     @Volatile private var activeSeq = NONE
 
+    /** Windows that last refused capture as secure; probes try them first. Worker only. */
+    private val secureWindowIds = HashSet<Int>()
+
     private class Shot(val target: Target, val buffer: HardwareBuffer?, val colorSpace: ColorSpace?)
 
     private class Job(
@@ -92,7 +101,7 @@ class WindowCapturer(
         val targets: List<Target>,
         val width: Int,
         val height: Int,
-        val rejectSecure: Boolean,
+        val probe: Boolean,
     ) {
         val shots = ArrayList<Shot>(targets.size)
         var retried = false
@@ -105,16 +114,30 @@ class WindowCapturer(
     }
 
     /**
-     * Captures [targets] (any order) and composites them into a [width]×[height] frame. With
-     * [rejectSecure], a capture that hits a secure window is dropped instead of shown.
+     * Captures [targets] (any order) and composites them into a [width]×[height] frame. A
+     * capture that meets a secure window is dropped instead ([Listener.onCaptureRejected]).
      */
-    fun capture(seq: Int, targets: List<Target>, width: Int, height: Int, rejectSecure: Boolean) = worker.post {
-        activeSeq = seq
-        if (targets.isEmpty()) {
-            main.post { listener.onCaptureFailed(seq) }
-            return@post
+    fun capture(seq: Int, targets: List<Target>, width: Int, height: Int) = worker.post {
+        start(Job(seq, targets.sortedBy { it.layer }, width, height, probe = false))
+    }
+
+    /**
+     * Checks whether any of [targets] is secure, trying the ones that were secure last time
+     * first (for them the answer comes back at once). Reports [Listener.onCaptureRejected]
+     * or [Listener.onProbeClear]; nothing is composited.
+     */
+    fun probe(seq: Int, targets: List<Target>) = worker.post {
+        val ordered = targets.sortedWith(compareBy({ it.windowId !in secureWindowIds }, { it.layer }))
+        start(Job(seq, ordered, 0, 0, probe = true))
+    }
+
+    private fun start(job: Job) {
+        activeSeq = job.seq
+        if (job.targets.isEmpty()) {
+            main.post { listener.onCaptureFailed(job.seq) }
+            return
         }
-        captureNext(Job(seq, targets.sortedBy { it.layer }, width, height, rejectSecure))
+        captureNext(job)
     }
 
     /**
@@ -132,6 +155,7 @@ class WindowCapturer(
         pixels = IntArray(0)
         frameDiff.reset()
         lastCaptureAt.clear()
+        secureWindowIds.clear()
     }
 
     private fun captureNext(job: Job) {
@@ -139,8 +163,22 @@ class WindowCapturer(
             job.release()
             return
         }
+        if (job.sawSecureWindow) {
+            // No point capturing the rest: the frame won't be shown.
+            job.release()
+            val seq = job.seq
+            main.post { listener.onCaptureRejected(seq) }
+            return
+        }
         if (job.shots.size == job.targets.size) {
-            composite(job)
+            if (job.probe) {
+                job.release()
+                secureWindowIds.clear()
+                val seq = job.seq
+                main.post { listener.onProbeClear(seq) }
+            } else {
+                composite(job)
+            }
             return
         }
         val target = job.targets[job.shots.size]
@@ -169,6 +207,7 @@ class WindowCapturer(
                 }
                 settled = true
                 worker.removeCallbacks(timeout)
+                secureWindowIds -= target.windowId
                 job.shots += Shot(target, result.hardwareBuffer, result.colorSpace)
                 captureNext(job)
             }
@@ -186,6 +225,7 @@ class WindowCapturer(
                 }
                 if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) {
                     job.sawSecureWindow = true
+                    secureWindowIds += target.windowId
                 }
                 job.shots += Shot(target, null, null) // Secure window, gone, or an error.
                 captureNext(job)
@@ -200,11 +240,6 @@ class WindowCapturer(
 
     private fun composite(job: Job) {
         val seq = job.seq
-        if (job.rejectSecure && job.sawSecureWindow) {
-            job.release()
-            main.post { listener.onCaptureRejected(seq) }
-            return
-        }
         try {
             val width = job.width
             val height = job.height
@@ -231,14 +266,14 @@ class WindowCapturer(
             // Window shots are hardware bitmaps, so this composites on the GPU and reads back once.
             val composite = Bitmap.createBitmap(picture, width, height, Bitmap.Config.ARGB_8888)
             job.release()
-            process(composite, seq, job.sawSecureWindow)
+            process(composite, seq)
         } catch (e: RuntimeException) {
             job.release()
             main.post { listener.onCaptureFailed(seq) }
         }
     }
 
-    private fun process(composite: Bitmap, seq: Int, secure: Boolean) {
+    private fun process(composite: Bitmap, seq: Int) {
         val width = composite.width
         val height = composite.height
         val count = width * height
@@ -249,7 +284,7 @@ class WindowCapturer(
         filterParams?.let(filter::setParams)
         filter.applyToArgb(pixels, count)
         val update = frameDiff.diff(pixels, width, height)?.let { Update(epoch, width, height, it) }
-        main.post { listener.onFrameProcessed(seq, update, secure) }
+        main.post { listener.onFrameProcessed(seq, update) }
     }
 
     private companion object {

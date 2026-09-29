@@ -1,5 +1,6 @@
 package com.paperscreen
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.BroadcastReceiver
@@ -8,13 +9,16 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.LauncherApps
 import android.content.res.ColorStateList
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
-import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.format.DateFormat
-import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -23,10 +27,14 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.BaseAdapter
 import android.widget.EditText
-import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.recyclerview.widget.ItemTouchHelper
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.SimpleItemAnimator
+import java.util.Collections
 import java.util.Date
 import java.util.Locale
 
@@ -34,25 +42,29 @@ import java.util.Locale
  * A minimal home screen that reads like a page of a book, in two views:
  *
  * - **Home page:** clock and date at the top, up to six favourite apps as centred text in
- *   the middle, and "Search apps" at the bottom.
+ *   the middle, and "Search apps" at the bottom. Long-press a favourite and drag to reorder;
+ *   long-press and release to replace or remove it.
  * - **App drawer** (opened from "Search apps"): a search field, the alphabetical app list
  *   with letter headings, and an A–Z index strip. Back or Home returns to the home page.
  *
- * No icons, wallpaper, widgets, dock or folders. Colours follow the filter's warmth setting.
+ * No icons, wallpaper, widgets, dock or folders. Colours follow the filter's warmth setting;
+ * clock format, size, date, seconds and font follow the Home screen settings.
  */
 class HomeActivity : Activity() {
 
     private lateinit var settings: PaperSettings
     private lateinit var catalog: AppCatalog
     private lateinit var launcherApps: LauncherApps
+    private val main = Handler(Looper.getMainLooper())
 
     private lateinit var root: View
     private lateinit var homePage: View
     private lateinit var clock: TextView
     private lateinit var date: TextView
     private lateinit var rule: View
-    private lateinit var favouritesList: LinearLayout
+    private lateinit var favouritesView: RecyclerView
     private lateinit var openDrawer: TextView
+    private val favouritesAdapter = FavouritesAdapter()
 
     private lateinit var drawer: View
     private lateinit var search: EditText
@@ -64,9 +76,19 @@ class HomeActivity : Activity() {
     private var faintInk = Color.argb(0x80, 0x33, 0x33, 0x33)
     private var paper = Color.WHITE
     private var ruleColor = Color.rgb(0xDD, 0xDD, 0xDD)
+    private var font = HomeFont.DEFAULT
+    private var showSeconds = false
 
     private val timeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) = updateClock()
+    }
+
+    /** Ticks on each second boundary while seconds are shown. */
+    private val secondTick = object : Runnable {
+        override fun run() {
+            updateClock()
+            main.postDelayed(this, 1000 - System.currentTimeMillis() % 1000)
+        }
     }
 
     private val isDrawerOpen: Boolean get() = drawer.visibility == View.VISIBLE
@@ -82,13 +104,14 @@ class HomeActivity : Activity() {
         clock = findViewById(R.id.home_clock)
         date = findViewById(R.id.home_date)
         rule = findViewById(R.id.home_rule)
-        favouritesList = findViewById(R.id.home_favourites)
+        favouritesView = findViewById(R.id.home_favourites)
         openDrawer = findViewById(R.id.home_open_drawer)
         drawer = findViewById(R.id.home_drawer)
         search = findViewById(R.id.home_search)
         list = findViewById(R.id.home_apps)
         index = findViewById(R.id.home_index)
 
+        setUpFavourites()
         openDrawer.setOnClickListener { openDrawer() }
         list.adapter = drawerAdapter
         list.setOnItemClickListener { _, _, position, _ ->
@@ -113,13 +136,19 @@ class HomeActivity : Activity() {
             addAction(Intent.ACTION_LOCALE_CHANGED)
         }
         registerReceiver(timeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        updateClock()
     }
 
     override fun onResume() {
         super.onResume()
-        applyColors() // Warmth may have changed in settings.
+        // Warmth and the home screen settings may have changed while we were away.
+        applyColors()
+        applyHomeStyle()
         renderFavourites()
+    }
+
+    override fun onPause() {
+        main.removeCallbacks(secondTick)
+        super.onPause()
     }
 
     override fun onStop() {
@@ -141,17 +170,35 @@ class HomeActivity : Activity() {
     }
 
     /** Back closes the drawer; on the home page it does nothing, as on any launcher. */
-    @Deprecated("Framework back handling; this app avoids AndroidX.")
+    @Deprecated("Framework back handling (onBackInvokedCallback needs an opt-in).")
     override fun onBackPressed() {
         closeDrawer()
     }
 
-    // --- Home page ----------------------------------------------------------------------
+    // --- Clock and style ----------------------------------------------------------------
+
+    /** Clock format, size, date, seconds and font from the Home screen settings. */
+    private fun applyHomeStyle() {
+        font = settings.homeFont
+        showSeconds = settings.showSeconds
+        clock.textSize = settings.clockSize.sp
+        date.visibility = if (settings.showDate) View.VISIBLE else View.GONE
+
+        val regular = font.typeface()
+        listOf(clock, date, openDrawer, search).forEach { it.typeface = regular }
+        index.typeface = regular
+        favouritesAdapter.restyle()
+        drawerAdapter.notifyDataSetChanged()
+
+        main.removeCallbacks(secondTick)
+        if (showSeconds) secondTick.run() else updateClock()
+    }
 
     private fun updateClock() {
         val locale = Locale.getDefault()
-        val skeleton = if (DateFormat.is24HourFormat(this)) "Hm" else "hm"
-        // Hours and minutes only: drop the AM/PM (or day-period) marker.
+        val is24h = settings.clock24h ?: DateFormat.is24HourFormat(this)
+        val skeleton = (if (is24h) "Hm" else "hm") + if (showSeconds) "s" else ""
+        // Hours and minutes (and seconds) only: drop the AM/PM (or day-period) marker.
         val timePattern = DateFormat.getBestDateTimePattern(locale, skeleton)
             .replace(Regex("\\s*[aBb]+\\s*"), "")
         val now = Date()
@@ -159,43 +206,22 @@ class HomeActivity : Activity() {
         date.text = DateFormat.format(DateFormat.getBestDateTimePattern(locale, "EEEEdMMMMyyyy"), now)
     }
 
+    // --- Favourites ---------------------------------------------------------------------
+
+    private fun setUpFavourites() {
+        favouritesView.layoutManager = LinearLayoutManager(this)
+        favouritesView.adapter = favouritesAdapter
+        // Rows slide into place when reordered; no cross-fades on rebinds.
+        (favouritesView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+        ItemTouchHelper(FavouriteDragCallback()).attachToRecyclerView(favouritesView)
+    }
+
     /** Favourites that are still installed, in the user's order. */
     private fun liveFavourites(): List<AppCatalog.App> = settings.favourites.mapNotNull(catalog::find)
 
-    /** One centred label per favourite, then "+ Add app" while there's room for more. */
     private fun renderFavourites() {
-        favouritesList.removeAllViews()
-        if (catalog.apps.isEmpty()) return // Still loading; nothing to resolve against yet.
-        val favourites = liveFavourites()
-        favourites.forEachIndexed { i, app ->
-            favouritesList.addView(favouriteLabel(app.label, 22f, ink).apply {
-                setOnClickListener { launch(app) }
-                setOnLongClickListener {
-                    pickApp(replacing = i)
-                    true
-                }
-            })
-        }
-        if (favourites.size < Favourites.MAX) {
-            favouritesList.addView(favouriteLabel(getString(R.string.home_add_favourite), 16f, faintInk).apply {
-                setOnClickListener { pickApp(replacing = null) }
-            })
-        }
-    }
-
-    private fun favouriteLabel(text: String, sizeSp: Float, color: Int) = TextView(this).apply {
-        setTextAppearance(R.style.HomeText)
-        this.text = text
-        textSize = sizeSp
-        setTextColor(color)
-        gravity = Gravity.CENTER
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        val padV = (12 * resources.displayMetrics.density).toInt()
-        setPadding(0, padV, 0, padV)
-        background = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground))
-            .use { it.getDrawable(0) }
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        // Until the app list has loaded there's nothing to resolve the favourites against.
+        favouritesAdapter.submit(if (catalog.apps.isEmpty()) null else liveFavourites())
     }
 
     /**
@@ -228,6 +254,122 @@ class HomeActivity : Activity() {
         edit(favourites)
         settings.favourites = favourites.distinct()
         renderFavourites()
+    }
+
+    /** Favourites as centred labels, then "+ Add app" while there's room for more. */
+    private inner class FavouritesAdapter : RecyclerView.Adapter<FavouritesAdapter.Holder>() {
+        val apps = ArrayList<AppCatalog.App>()
+        private var showAdd = false
+
+        inner class Holder(val label: TextView) : RecyclerView.ViewHolder(label)
+
+        @SuppressLint("NotifyDataSetChanged") // The whole list is replaced; at most seven rows.
+        fun submit(favourites: List<AppCatalog.App>?) {
+            apps.clear()
+            favourites?.let(apps::addAll)
+            showAdd = favourites != null && favourites.size < Favourites.MAX
+            notifyDataSetChanged()
+        }
+
+        /** Rebinds every row in place after a font or colour change. */
+        fun restyle() = notifyItemRangeChanged(0, itemCount)
+
+        /** Moves a favourite while it's being dragged; saved when the drag ends. */
+        fun move(from: Int, to: Int) {
+            Collections.swap(apps, from, to)
+            notifyItemMoved(from, to)
+        }
+
+        fun isAddRow(position: Int) = position == apps.size
+
+        override fun getItemCount() = apps.size + if (showAdd) 1 else 0
+        override fun getItemViewType(position: Int) = if (isAddRow(position)) TYPE_ADD else TYPE_APP
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = Holder(
+            LayoutInflater.from(parent.context).inflate(R.layout.item_home_favourite, parent, false) as TextView,
+        )
+
+        override fun onBindViewHolder(holder: Holder, position: Int) {
+            val label = holder.label
+            label.typeface = font.typeface()
+            if (isAddRow(position)) {
+                label.text = getString(R.string.home_add_favourite)
+                label.textSize = 16f
+                label.setTextColor(faintInk)
+                label.setOnClickListener { pickApp(replacing = null) }
+            } else {
+                val app = apps[position]
+                label.text = app.label
+                label.textSize = 22f
+                label.setTextColor(ink)
+                label.setOnClickListener { launch(app) }
+            }
+        }
+    }
+
+    /**
+     * Long-press picks a favourite up; dragging moves it and the others slide apart. The new
+     * order is saved on release. Releasing without moving opens replace/remove instead.
+     */
+    private inner class FavouriteDragCallback : ItemTouchHelper.Callback() {
+        private var moved = false
+
+        override fun isLongPressDragEnabled() = true
+        override fun isItemViewSwipeEnabled() = false
+
+        override fun getMovementFlags(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder): Int =
+            if (favouritesAdapter.isAddRow(viewHolder.bindingAdapterPosition)) {
+                0
+            } else {
+                makeMovementFlags(ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0)
+            }
+
+        override fun onMove(
+            recyclerView: RecyclerView,
+            viewHolder: RecyclerView.ViewHolder,
+            target: RecyclerView.ViewHolder,
+        ): Boolean {
+            val to = target.bindingAdapterPosition
+            if (favouritesAdapter.isAddRow(to)) return false // "+ Add app" stays last.
+            favouritesAdapter.move(viewHolder.bindingAdapterPosition, to)
+            moved = true
+            return true
+        }
+
+        override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) = Unit
+
+        override fun onSelectedChanged(viewHolder: RecyclerView.ViewHolder?, actionState: Int) {
+            if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && viewHolder != null) {
+                moved = false
+                viewHolder.itemView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            }
+        }
+
+        override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
+            viewHolder.itemView.translationX = 0f
+            viewHolder.itemView.translationY = 0f
+            if (moved) {
+                settings.favourites = favouritesAdapter.apps.map { it.component.flattenToString() }
+            } else {
+                val position = viewHolder.bindingAdapterPosition
+                if (position != RecyclerView.NO_POSITION) pickApp(replacing = position)
+            }
+            moved = false
+        }
+
+        /** Just follow the finger: no lift, shadow or scaling. */
+        override fun onChildDraw(
+            c: Canvas,
+            recyclerView: RecyclerView,
+            viewHolder: RecyclerView.ViewHolder,
+            dX: Float,
+            dY: Float,
+            actionState: Int,
+            isCurrentlyActive: Boolean,
+        ) {
+            viewHolder.itemView.translationX = dX
+            viewHolder.itemView.translationY = dY
+        }
     }
 
     // --- App drawer ---------------------------------------------------------------------
@@ -317,6 +459,7 @@ class HomeActivity : Activity() {
         search.setHintTextColor(faintInk)
         search.backgroundTintList = ColorStateList.valueOf(ruleColor)
         index.color = ink
+        favouritesAdapter.restyle()
         drawerAdapter.notifyDataSetChanged()
     }
 
@@ -366,12 +509,23 @@ class HomeActivity : Activity() {
             val row = rows[position]
             val layout = if (row is Row.Heading) R.layout.item_home_section else R.layout.item_home_app
             val view = (convertView ?: LayoutInflater.from(parent.context).inflate(layout, parent, false)) as TextView
-            view.text = when (row) {
-                is Row.Heading -> row.letter
-                is Row.App -> row.app.label
+            when (row) {
+                is Row.Heading -> {
+                    view.text = row.letter
+                    view.typeface = font.typeface(Typeface.BOLD)
+                }
+                is Row.App -> {
+                    view.text = row.app.label
+                    view.typeface = font.typeface()
+                }
             }
             view.setTextColor(ink)
             return view
         }
+    }
+
+    private companion object {
+        const val TYPE_APP = 0
+        const val TYPE_ADD = 1
     }
 }

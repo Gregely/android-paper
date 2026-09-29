@@ -127,14 +127,17 @@ pre-tint isn't applied twice. It has two views.
 
 **Home page** (the default), a single page that doesn't scroll:
 
-- **Clock** and **date** pinned to the top. The clock shows hours and minutes only,
-  updated each minute (`ACTION_TIME_TICK`), in the system's 12/24-hour style without AM/PM.
-  The date includes the day of the week. A hairline sits below them.
+- **Clock** and **date** pinned to the top. The clock shows hours and minutes, without
+  AM/PM, updated each minute (`ACTION_TIME_TICK`). With **Show seconds** on, it shows
+  seconds too and ticks on each second boundary while visible. The date includes the day of
+  the week and can be hidden. A hairline sits below them.
 - **Favourites**: up to six apps as a centred column of text labels, vertically centred in
   the space below the hairline. Two favourites sit in the middle of the page, not at the
-  top. Tap to open; long-press to replace or remove. While there's room, a faint
-  **+ Add app** entry follows the list. Saved across restarts. Favourites from the earlier
-  five-slot layout carry over.
+  top. Tap to open. **Long-press and drag** to reorder: the row follows your finger and the
+  others slide apart (a RecyclerView with `ItemTouchHelper`, drawn without lift, shadow or
+  scaling). The new order is saved on release. **Long-press and release** without moving to
+  replace or remove the app. While there's room, a faint **+ Add app** entry follows the
+  list. Saved across restarts.
 - **Search apps**, a faint underlined line pinned to the bottom. Tapping it opens the drawer
   with the keyboard up.
 
@@ -155,10 +158,24 @@ On the home page, Back does nothing. The status bar and notification shade work 
 There's no wallpaper, widgets, dock, folders or icons. The app list updates itself as apps
 are installed, updated or removed (`LauncherApps.Callback`).
 
-**Setting it as the launcher:** Settings → Home screen → **Use as home screen** asks the
-system to make PaperScreen the default home app (`RoleManager.ROLE_HOME`). The switch shows
-whether it currently is. Apps can't give up the role themselves, so turning the switch off
-opens Android's "Default home app" setting to pick another.
+**Setting it as the launcher:** the first time the app is opened, it asks the system to make
+PaperScreen the default home app (`RoleManager.ROLE_HOME`), and the system asks the user to
+confirm. The accessibility-service prompt follows after that. Later, Settings → Home screen
+→ **Use as home screen** does the same, and the switch shows whether PaperScreen currently
+is the default. Apps can't give up the role themselves, so turning the switch off opens
+Android's "Default home app" setting to pick another.
+
+**Home screen settings**, shown only while PaperScreen is the default home app, and saved:
+
+| Setting | Options |
+|---|---|
+| 24-hour clock | Follows the phone's setting until changed here |
+| Clock size | Small (56 sp), Medium (76 sp, default), Large (96 sp) |
+| Show date | On by default |
+| Show seconds | Off by default |
+| Font | Serif (default), Sans-serif, Monospace. Applies to the whole launcher: clock, date, favourites and drawer. |
+
+Changes apply the next time the home screen comes to the front.
 
 Listing other apps needs no permission. The manifest's `<queries>` entry for launcher
 activities makes them visible (Android 11+ package visibility).
@@ -173,7 +190,9 @@ Requirements: JDK 17+ and an Android SDK with platform 34.
 ```
 
 - `minSdk`/`targetSdk`/`compileSdk` 34, Gradle Kotlin DSL, AGP 8.10, Kotlin 2.1.
-- No libraries: the app uses only framework APIs and the Kotlin stdlib (JUnit is test-only).
+- One library: `androidx.recyclerview` (1.3.2, the newest line for compileSdk 34) for
+  dragging favourites with `ItemTouchHelper`. Everything else is framework APIs and the
+  Kotlin stdlib (JUnit is test-only).
 
 ## Permissions and setup
 

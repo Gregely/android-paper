@@ -37,6 +37,13 @@ class AlphabetStrip @JvmOverloads constructor(
             invalidate()
         }
 
+    var typeface: Typeface
+        get() = paint.typeface
+        set(value) {
+            paint.typeface = value
+            invalidate()
+        }
+
     private val maxTextSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12f, resources.displayMetrics)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL)

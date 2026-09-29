@@ -63,8 +63,20 @@
 
     <string name="section_home">Home screen</string>
     <string name="home_screen">Use as home screen</string>
-    <string name="home_screen_hint">A page-style home screen: clock, date, favourites and an alphabetical list of apps, all as text. Long-press a favourite on the home screen to change it. Turning this off opens the system\'s default home app setting.</string>
+    <string name="home_screen_hint">A page-style home screen: clock, date, favourites and an app drawer, all as text. On the home screen, long-press a favourite and drag to reorder it, or release to change it. Turning this off opens the system\'s default home app setting.</string>
     <string name="home_label">PaperScreen Home</string>
+    <string name="clock_24h">24-hour clock</string>
+    <string name="clock_24h_hint">Follows your phone\'s setting until you change it here.</string>
+    <string name="clock_size">Clock size</string>
+    <string name="clock_size_small">Small</string>
+    <string name="clock_size_medium">Medium</string>
+    <string name="clock_size_large">Large</string>
+    <string name="show_date">Show date</string>
+    <string name="show_seconds">Show seconds</string>
+    <string name="home_font">Font</string>
+    <string name="font_serif">Serif</string>
+    <string name="font_sans">Sans-serif</string>
+    <string name="font_mono">Monospace</string>
     <string name="home_search_hint">Search apps</string>
     <string name="home_add_favourite">+ Add app</string>
     <string name="home_index_description">Alphabet index. Tap a letter to jump to it.</string>

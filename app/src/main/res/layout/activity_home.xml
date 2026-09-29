@@ -47,25 +47,25 @@
             tools:ignore="PxUsage" />
 
         <!--
-          Fills the space below the rule. fillViewport stretches the short favourites column to
-          that height and its gravity centres the labels; six long names can still scroll.
+          Fills the space below the rule. The favourites list sizes to its content and sits in
+          the vertical centre; if six long names don't fit, it takes the whole space and scrolls.
         -->
-        <ScrollView
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:fillViewport="true"
-            android:scrollbars="none">
+            android:layout_weight="1">
 
-            <LinearLayout
+            <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/home_favourites"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:gravity="center"
-                android:orientation="vertical"
+                android:layout_gravity="center_vertical"
+                android:overScrollMode="never"
                 android:paddingTop="16dp"
-                android:paddingBottom="16dp" />
-        </ScrollView>
+                android:paddingBottom="16dp"
+                android:clipToPadding="false"
+                android:scrollbars="none" />
+        </FrameLayout>
 
         <TextView
             android:id="@+id/home_open_drawer"

@@ -37,6 +37,9 @@ android {
 }
 
 dependencies {
-    // The app itself only uses Android framework APIs (plus the Kotlin stdlib).
+    // The only library: RecyclerView's ItemTouchHelper, for dragging favourites on the home
+    // screen. Everything else uses Android framework APIs (plus the Kotlin stdlib).
+    // 1.3.x is the newest line that builds against compileSdk 34.
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
     testImplementation("junit:junit:4.13.2")
 }

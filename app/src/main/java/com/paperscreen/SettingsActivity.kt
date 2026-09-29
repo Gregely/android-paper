@@ -8,8 +8,10 @@ import android.app.role.RoleManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.os.Bundle
 import android.os.SystemClock
+import android.text.format.DateFormat
 import android.provider.Settings
 import android.view.MotionEvent
 import android.view.View
@@ -41,6 +43,7 @@ class SettingsActivity : Activity() {
     private var syncingUi = false
 
     private var homeRequestedAt = 0L
+    private var firstRunHomePrompt = false
 
     /** The user asked to start, and we sent them to turn on the accessibility service first. */
     private var startAfterServiceEnabled = false
@@ -74,8 +77,23 @@ class SettingsActivity : Activity() {
         setUpSliders()
         setUpFeatureToggles()
         setUpHomeSwitch()
+        setUpHomeOptions()
         setUpPreviewButton()
 
+        // First run: offer to become the home screen straight away (the system asks the user
+        // to confirm); the accessibility service prompt follows once that's answered.
+        if (!settings.homePromptShown) {
+            settings.homePromptShown = true
+            if (!isDefaultHome()) {
+                firstRunHomePrompt = true
+                requestHomeRole()
+                return
+            }
+        }
+        maybeShowServicePrompt()
+    }
+
+    private fun maybeShowServicePrompt() {
         if (!isServiceEnabled() && !settings.servicePromptShown) {
             settings.servicePromptShown = true
             showServiceDialog()
@@ -204,9 +222,63 @@ class SettingsActivity : Activity() {
     }
 
     private fun renderHome() {
+        val isHome = isDefaultHome()
         syncingUi = true
-        homeSwitch.isChecked = isDefaultHome()
+        homeSwitch.isChecked = isHome
         syncingUi = false
+        findViewById<View>(R.id.home_options).visibility = if (isHome) View.VISIBLE else View.GONE
+    }
+
+    /** Clock and font options for the home screen; applied when it next comes to the front. */
+    private fun setUpHomeOptions() {
+        findViewById<Switch>(R.id.clock_24h_switch).apply {
+            isChecked = settings.clock24h ?: DateFormat.is24HourFormat(this@SettingsActivity)
+            setOnCheckedChangeListener { _, checked -> settings.clock24h = checked }
+        }
+        findViewById<Switch>(R.id.show_date_switch).apply {
+            isChecked = settings.showDate
+            setOnCheckedChangeListener { _, checked -> settings.showDate = checked }
+        }
+        findViewById<Switch>(R.id.show_seconds_switch).apply {
+            isChecked = settings.showSeconds
+            setOnCheckedChangeListener { _, checked -> settings.showSeconds = checked }
+        }
+        bindChoice(R.id.clock_size_group, ClockSize.entries, settings.clockSize, { getString(it.label) }) {
+            settings.clockSize = it
+        }
+        bindChoice(
+            R.id.home_font_group,
+            HomeFont.entries,
+            settings.homeFont,
+            { getString(it.label) },
+            typeface = { it.typeface() },
+        ) { settings.homeFont = it }
+    }
+
+    /** A row of radio buttons, one per option, saving the choice as it changes. */
+    private fun <T> bindChoice(
+        groupId: Int,
+        options: List<T>,
+        selected: T,
+        label: (T) -> String,
+        typeface: ((T) -> Typeface)? = null,
+        save: (T) -> Unit,
+    ) {
+        val group = findViewById<RadioGroup>(groupId)
+        val minHeight = (48 * resources.displayMetrics.density).toInt()
+        for (option in options) {
+            val button = RadioButton(this).apply {
+                id = View.generateViewId()
+                text = label(option)
+                textSize = 15f
+                setTextColor(getColor(R.color.ink))
+                typeface?.let { this.typeface = it(option) }
+                this.minHeight = minHeight
+            }
+            group.addView(button, RadioGroup.LayoutParams(0, RadioGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (option == selected) group.check(button.id)
+            button.setOnCheckedChangeListener { _, checked -> if (checked) save(option) }
+        }
     }
 
     private fun isDefaultHome(): Boolean =
@@ -224,11 +296,18 @@ class SettingsActivity : Activity() {
         startActivityForResult(roles.createRequestRoleIntent(RoleManager.ROLE_HOME), REQUEST_HOME)
     }
 
-    @Deprecated("Framework Activity result API; this app avoids AndroidX.")
+    @Deprecated("Framework Activity result API.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQUEST_HOME) return
+        if (firstRunHomePrompt) {
+            // The unprompted first-run offer: accept the answer either way and move on.
+            firstRunHomePrompt = false
+            renderHome()
+            maybeShowServicePrompt()
+            return
+        }
         // A refusal this fast means the system didn't show its prompt (e.g. after the user
         // declined it twice); fall back to the default-apps screen.
         if (!isDefaultHome() && SystemClock.uptimeMillis() - homeRequestedAt < INSTANT_REFUSAL_MS) {

@@ -99,6 +99,37 @@ class PaperSettings(context: Context) {
         get() = Favourites.decode(prefs.getString(KEY_FAVOURITES, null))
         set(value) = prefs.edit().putString(KEY_FAVOURITES, Favourites.encode(value)).apply()
 
+    /** 24-hour clock on the home page, or null to follow the system setting. */
+    var clock24h: Boolean?
+        get() = if (prefs.contains(KEY_CLOCK_24H)) prefs.getBoolean(KEY_CLOCK_24H, false) else null
+        set(value) = prefs.edit().apply {
+            if (value == null) remove(KEY_CLOCK_24H) else putBoolean(KEY_CLOCK_24H, value)
+        }.apply()
+
+    var clockSize: ClockSize
+        get() = enumPref(KEY_CLOCK_SIZE, ClockSize.DEFAULT)
+        set(value) = prefs.edit().putString(KEY_CLOCK_SIZE, value.name).apply()
+
+    var showDate: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_DATE, true)
+        set(value) = prefs.edit().putBoolean(KEY_SHOW_DATE, value).apply()
+
+    var showSeconds: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_SECONDS, false)
+        set(value) = prefs.edit().putBoolean(KEY_SHOW_SECONDS, value).apply()
+
+    var homeFont: HomeFont
+        get() = enumPref(KEY_HOME_FONT, HomeFont.DEFAULT)
+        set(value) = prefs.edit().putString(KEY_HOME_FONT, value.name).apply()
+
+    /** Whether the one-time "make PaperScreen your home screen" prompt has been shown. */
+    var homePromptShown: Boolean
+        get() = prefs.getBoolean(KEY_HOME_PROMPTED, false)
+        set(value) = prefs.edit().putBoolean(KEY_HOME_PROMPTED, value).apply()
+
+    private inline fun <reified E : Enum<E>> enumPref(key: String, default: E): E =
+        prefs.getString(key, null)?.let { name -> enumValues<E>().firstOrNull { it.name == name } } ?: default
+
     fun filterParams() = EinkFilter.Params(
         warmth = warmth,
         contrast = contrast,
@@ -126,6 +157,12 @@ class PaperSettings(context: Context) {
         private const val KEY_CAPTURE_ENABLED = "capture_enabled"
         private const val KEY_NOTIFICATION_PROMPTED = "notification_prompt_shown"
         private const val KEY_FAVOURITES = "home_favourites"
+        private const val KEY_CLOCK_24H = "home_clock_24h"
+        private const val KEY_CLOCK_SIZE = "home_clock_size"
+        private const val KEY_SHOW_DATE = "home_show_date"
+        private const val KEY_SHOW_SECONDS = "home_show_seconds"
+        private const val KEY_HOME_FONT = "home_font"
+        private const val KEY_HOME_PROMPTED = "home_prompt_shown"
 
         const val MIN_CUSTOM_INTERVAL_MS = 340
         const val MAX_CUSTOM_INTERVAL_MS = 2000

@@ -71,12 +71,29 @@ time and each waits out its own interval. In practice the fastest refresh is abo
 Reading (500), Slow (1000), E-ink (1500), or Custom (340–2000 ms, in 20 ms steps). The
 interval is the minimum time between refreshes. The choice is remembered.
 
-**Settings layout.** Refresh speed, warmth and contrast are always shown. Posterization,
-Ghosting, Full refresh and Refresh on change each have a switch (all on by default), and
-their sub-settings are only shown while the switch is on. Refresh on change has no
-sub-settings, so its switch stands alone. The secure-app message is always on.
-Every slider has a small circular-arrow reset button beside its value. It appears only while
-the value differs from the default, and tapping it slides the value back to the default.
+**Settings layout.** The settings screen is styled as a page from the same book as the home
+screen. It uses the home screen's paper and ink, tinted by the current warmth exactly as the
+filter tints its output: background, text, hairlines, switches, sliders and dialogs. It also
+uses the home screen's font (serif, sans-serif or monospace), and both update live as you
+change them. There are no cards, shadows or coloured accents. Sections are separated by
+hairlines and labelled with small, letterspaced headers:
+
+- **Header:** the master switch, with a live one-line summary underneath, e.g.
+  "Filtering active · Standard · 16 greys · Warmth 20".
+- **Display:** Warmth, Contrast, and Posterization (with its grey levels).
+- **Refresh:** speed presets, Refresh on change, Ghosting (opacity, fade) and Full refresh
+  (interval, flash duration).
+- **Night warmth** and **Home screen**, as described below.
+- **Footer:** a full-width *Hold to preview* button, *About PaperScreen* (version and a
+  *Support development* link, currently a placeholder URL in `strings.xml`), and *Reset all
+  to defaults*. Reset asks first, then puts every setting on the page back to its default.
+  It leaves alone your favourites, whether filtering is on, and whether PaperScreen is your
+  home screen.
+
+Each switch with sub-settings expands and collapses them with a short height animation, and
+the whole page scrolls as one. Every slider shows its value and has a small circular-arrow
+reset button. The arrow is light grey (and inactive) at the default, and darkens when there's
+something to reset. Tapping it slides the value back to the default.
 
 **Night warmth** (off by default). While on, warmth follows the time of day instead of the
 Warmth slider: *Day warmth* (0–100, default 10) by day, *Night warmth* (0–100, default 60)

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A thin rule down the left edge of a feature's sub-settings. -->
+<!-- A hairline down the start edge of a feature's sub-settings; recoloured in code. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:gravity="start|fill_vertical" android:width="2dp" android:bottom="16dp">
+    <item android:gravity="start|fill_vertical" android:width="1dp" android:top="4dp" android:bottom="12dp">
         <shape android:shape="rectangle">
-            <solid android:color="@color/divider" />
+            <solid android:color="@color/rule" />
         </shape>
     </item>
 </layer-list>

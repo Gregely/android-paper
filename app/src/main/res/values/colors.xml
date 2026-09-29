@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="paper">#F2EEE6</color>
-    <color name="paper_card">#FBF9F4</color>
-    <color name="ink">#2B2A28</color>
-    <color name="ink_secondary">#6E6A63</color>
-    <color name="accent">#8A6A3E</color>
-    <color name="divider">#1F2B2A28</color>
-    <color name="warning_bg">#F6E3C4</color>
+    <!--
+      Settings page greys at the default warmth. SettingsPage retints them in code for the
+      current warmth, the same way the home screen and the filter do.
+    -->
+    <color name="paper">#FBFBF9</color>
+    <color name="ink">#323232</color>
+    <color name="ink_secondary">#757574</color>
+    <color name="ink_label">#8A8A89</color>
+    <color name="rule">#DADAD8</color>
+    <color name="highlight">#1F333333</color>
     <color name="icon_background">#E8E2D6</color>
     <color name="icon_foreground">#3A3835</color>
     <!-- Home screen, before the warmth tint is applied in code. -->

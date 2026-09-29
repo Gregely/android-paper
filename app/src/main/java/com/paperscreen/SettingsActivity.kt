@@ -9,11 +9,16 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.TimePickerDialog
 import android.app.role.RoleManager
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -40,6 +45,8 @@ class SettingsActivity : Activity() {
 
     private lateinit var settings: PaperSettings
     private lateinit var preview: FilterPreview
+    private lateinit var page: SettingsPage
+    private lateinit var root: View
 
     private lateinit var serviceBanner: View
     private lateinit var masterSwitch: Switch
@@ -57,6 +64,13 @@ class SettingsActivity : Activity() {
     /** Re-evaluate each slider's reset button (e.g. when Night warmth takes over warmth). */
     private val resetRefreshers = mutableListOf<() -> Unit>()
     private var warmthOverrideDialog: AlertDialog? = null
+    private var homeRendered = false
+
+    /** Any settings change: refresh the summary, and the page's tint and font if they moved. */
+    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        renderSummary()
+        applyPageStyle()
+    }
 
     // While visible, keep the Night warmth readouts in step with the clock.
     private val main = Handler(Looper.getMainLooper())
@@ -64,6 +78,8 @@ class SettingsActivity : Activity() {
         override fun run() {
             renderWarmthControl()
             renderNightStatus()
+            renderSummary()
+            applyPageStyle()
             main.postDelayed(this, NIGHT_TICK_MS)
         }
     }
@@ -84,9 +100,11 @@ class SettingsActivity : Activity() {
         setContentView(R.layout.activity_settings)
         settings = PaperSettings(this)
         preview = FilterPreview(this)
+        page = SettingsPage(resources.displayMetrics.density)
         startAfterServiceEnabled = savedInstanceState?.getBoolean(STATE_START_PENDING) ?: false
         firstRunHomePrompt = savedInstanceState?.getBoolean(STATE_FIRST_RUN_HOME) ?: false
 
+        root = findViewById(R.id.settings_root)
         serviceBanner = findViewById(R.id.permission_banner)
         masterSwitch = findViewById(R.id.master_switch)
         homeSwitch = findViewById(R.id.home_switch)
@@ -115,6 +133,9 @@ class SettingsActivity : Activity() {
         setUpNightWarmth()
         setUpWarmthOverride()
         setUpPreviewButton()
+        setUpFooter()
+        applyPageStyle(force = true)
+        renderSummary()
 
         // First run: offer to become the home screen straight away (the system asks the user
         // to confirm); the accessibility service prompt follows once that's answered.
@@ -139,6 +160,7 @@ class SettingsActivity : Activity() {
     override fun onStart() {
         super.onStart()
         PaperScreenAccessibilityService.addStateListener(stateListener)
+        settings.prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         render()
     }
 
@@ -161,6 +183,7 @@ class SettingsActivity : Activity() {
 
     override fun onStop() {
         PaperScreenAccessibilityService.removeStateListener(stateListener)
+        settings.prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         super.onStop()
     }
 
@@ -218,7 +241,7 @@ class SettingsActivity : Activity() {
             .setPositiveButton(R.string.open_settings) { _, _ -> openAccessibilitySettings() }
             .setNegativeButton(R.string.not_now) { _, _ -> abandonStart() }
             .setOnCancelListener { abandonStart() }
-            .show()
+            .showStyled()
     }
 
     private fun abandonStart() {
@@ -266,7 +289,8 @@ class SettingsActivity : Activity() {
         syncingUi = true
         homeSwitch.isChecked = isHome
         syncingUi = false
-        findViewById<View>(R.id.home_options).visibility = if (isHome) View.VISIBLE else View.GONE
+        Reveal.set(findViewById(R.id.home_options), isHome, animate = homeRendered)
+        homeRendered = true
     }
 
     /** Clock and font options for the home screen; applied when it next comes to the front. */
@@ -311,8 +335,11 @@ class SettingsActivity : Activity() {
                 id = View.generateViewId()
                 text = label(option)
                 textSize = 15f
-                setTextColor(getColor(R.color.ink))
-                typeface?.let { this.typeface = it(option) }
+                typeface?.let {
+                    // Each font option is shown in its own typeface, not the page's.
+                    this.typeface = it(option)
+                    setTag(R.id.tag_keep_typeface, true)
+                }
                 this.minHeight = minHeight
             }
             group.addView(button, RadioGroup.LayoutParams(0, RadioGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -373,13 +400,55 @@ class SettingsActivity : Activity() {
         syncingUi = true
         masterSwitch.isChecked = isOn(state)
         syncingUi = false
-        statusText.setText(
-            when (state) {
-                PaperScreenAccessibilityService.State.RUNNING -> R.string.status_running
-                PaperScreenAccessibilityService.State.SNOOZED -> R.string.status_snoozed
-                else -> R.string.status_stopped
-            },
-        )
+        renderSummary()
+    }
+
+    /** "Filtering active · Standard · 16 greys · Warmth 20": the setup at a glance. */
+    private fun renderSummary() {
+        val state = when (PaperScreenAccessibilityService.state) {
+            PaperScreenAccessibilityService.State.RUNNING -> R.string.summary_running
+            PaperScreenAccessibilityService.State.SNOOZED -> R.string.summary_snoozed
+            else -> R.string.summary_stopped
+        }
+        val preset = settings.refreshPreset
+        val speed = if (preset == RefreshPreset.CUSTOM) {
+            getString(R.string.summary_custom, settings.customIntervalMs)
+        } else {
+            getString(preset.label)
+        }
+        val greys = if (settings.posterize) {
+            resources.getQuantityString(R.plurals.summary_greys, settings.greyLevels, settings.greyLevels)
+        } else {
+            getString(R.string.summary_smooth)
+        }
+        val warmth = if (settings.nightWarmth) {
+            getString(R.string.summary_night_warmth, settings.effectiveWarmth())
+        } else {
+            getString(R.string.summary_warmth, settings.warmth)
+        }
+        statusText.text = listOf(getString(state), speed, greys, warmth).joinToString(getString(R.string.summary_separator))
+    }
+
+    /** Tints the page for the current warmth and sets the home screen's font, if either changed. */
+    private fun applyPageStyle(force: Boolean = false) {
+        if (!page.apply(root, settings.effectiveWarmth(), settings.homeFont, force)) return
+        val paper = page.palette.paper
+        root.setBackgroundColor(paper)
+        window.statusBarColor = paper
+        window.navigationBarColor = paper
+        resetRefreshers.forEach { it() }
+    }
+
+    /** Shows the dialog on the same tinted paper, in the same font, as the page. */
+    private fun AlertDialog.Builder.showStyled(): AlertDialog = show().also { dialog ->
+        dialog.window?.let { window ->
+            val background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(page.palette.paper)
+            }
+            window.setBackgroundDrawable(InsetDrawable(background, dp(16)))
+            page.style(window.decorView)
+        }
     }
 
     private fun isOn(state: PaperScreenAccessibilityService.State) =
@@ -400,7 +469,6 @@ class SettingsActivity : Activity() {
                 text = preset.ms?.let { getString(R.string.preset_option, getString(preset.label), it) }
                     ?: getString(preset.label)
                 textSize = 15f
-                setTextColor(getColor(R.color.ink))
                 this.minHeight = minHeight
             }
             group.addView(button, RadioGroup.LayoutParams.MATCH_PARENT, RadioGroup.LayoutParams.WRAP_CONTENT)
@@ -411,7 +479,7 @@ class SettingsActivity : Activity() {
             val preset = radios.findViewById<RadioButton>(checkedId)?.tag as? RefreshPreset
                 ?: return@setOnCheckedChangeListener
             settings.refreshPreset = preset
-            renderInterval()
+            renderInterval(animate = true)
         }
 
         val step = PaperSettings.CUSTOM_INTERVAL_STEP_MS
@@ -428,12 +496,12 @@ class SettingsActivity : Activity() {
             },
             render = { customValue.text = getString(R.string.custom_interval_value, it * step) },
         )
-        renderInterval()
+        renderInterval(animate = false)
     }
 
-    private fun renderInterval() {
+    private fun renderInterval(animate: Boolean = false) {
         val preset = settings.refreshPreset
-        customInterval.visibility = if (preset == RefreshPreset.CUSTOM) View.VISIBLE else View.GONE
+        Reveal.set(customInterval, preset == RefreshPreset.CUSTOM, animate)
         intervalValue.text = getString(R.string.refresh_interval_value, getString(preset.label), settings.refreshIntervalMs)
     }
 
@@ -537,10 +605,10 @@ class SettingsActivity : Activity() {
             renderNightStatus()
         }
         val customTimes = findViewById<View>(R.id.night_custom_times)
-        customTimes.visibility = if (settings.nightSchedule == NightScheduleMode.CUSTOM) View.VISIBLE else View.GONE
+        Reveal.set(customTimes, settings.nightSchedule == NightScheduleMode.CUSTOM, animate = false)
         bindChoice(R.id.night_schedule_group, NightScheduleMode.entries, settings.nightSchedule, { getString(it.label) }) {
             settings.nightSchedule = it
-            customTimes.visibility = if (it == NightScheduleMode.CUSTOM) View.VISIBLE else View.GONE
+            Reveal.set(customTimes, it == NightScheduleMode.CUSTOM)
             renderWarmthControl()
             renderNightStatus()
         }
@@ -635,7 +703,7 @@ class SettingsActivity : Activity() {
      */
     private fun renderWarmthControl() {
         val controlled = settings.nightWarmth
-        findViewById<View>(R.id.warmth_controlled).visibility = if (controlled) View.VISIBLE else View.GONE
+        Reveal.set(findViewById(R.id.warmth_controlled), controlled)
         val alpha = if (controlled) DIMMED_ALPHA else 1f
         warmthSeek.alpha = alpha
         warmthValue.alpha = alpha
@@ -663,7 +731,7 @@ class SettingsActivity : Activity() {
                 nightSwitch.isChecked = false
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .showStyled()
     }
 
     private fun valueText(id: Int): TextView = findViewById(id)
@@ -683,10 +751,10 @@ class SettingsActivity : Activity() {
         val toggle = findViewById<Switch>(switchId)
         val options = optionsId?.let { findViewById<View>(it) }
         toggle.isChecked = initial
-        options?.visibility = if (initial) View.VISIBLE else View.GONE
+        options?.let { Reveal.set(it, initial, animate = false) }
         toggle.setOnCheckedChangeListener { _, checked ->
             save(checked)
-            options?.visibility = if (checked) View.VISIBLE else View.GONE
+            options?.let { Reveal.set(it, checked) }
         }
     }
 
@@ -714,8 +782,11 @@ class SettingsActivity : Activity() {
         val reset = addResetButton(findViewById(valueId))
         var animator: ObjectAnimator? = null
         val refreshReset = {
-            // INVISIBLE, not GONE, so the value beside it doesn't shift as it comes and goes.
-            reset.visibility = if (seek.progress != default && resetEnabled()) View.VISIBLE else View.INVISIBLE
+            // Always there, so it's discoverable: faint at the default, darker when it can act.
+            val active = seek.progress != default && resetEnabled()
+            reset.isEnabled = active
+            val palette = page.palette
+            reset.imageTintList = ColorStateList.valueOf(if (active) palette.resetActive else palette.resetIdle)
         }
         resetRefreshers += refreshReset
         refreshReset()
@@ -769,11 +840,9 @@ class SettingsActivity : Activity() {
         }
         val button = ImageButton(this).apply {
             setImageResource(R.drawable.ic_reset)
-            imageTintList = ColorStateList.valueOf(getColor(R.color.accent))
             setBackgroundResource(selectable.resourceId)
             contentDescription = getString(R.string.reset_to_default, label?.text ?: "")
             tooltipText = contentDescription
-            visibility = View.INVISIBLE
         }
         val params = LinearLayout.LayoutParams(size, size).apply {
             topMargin = overhang
@@ -786,6 +855,44 @@ class SettingsActivity : Activity() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    // --- Footer: about and reset -----------------------------------------------------------
+
+    private fun setUpFooter() {
+        val version = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
+        valueText(R.id.about_version).text = getString(R.string.about_version, version)
+        findViewById<Button>(R.id.support_button).setOnClickListener { openSupportPage() }
+        findViewById<Button>(R.id.reset_all_button).setOnClickListener { confirmResetAll() }
+    }
+
+    private fun openSupportPage() {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.support_url))))
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, R.string.support_open_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun confirmResetAll() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.reset_all_title)
+            .setMessage(R.string.reset_all_message)
+            .setPositiveButton(R.string.reset_all_confirm) { _, _ -> resetAll() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .showStyled()
+    }
+
+    /**
+     * Puts every setting back to its default and reopens the page, so every control is built
+     * from the defaults (restoring the old page's view state would bring the old values back).
+     */
+    private fun resetAll() {
+        settings.resetToDefaults()
+        startActivity(Intent(this, SettingsActivity::class.java))
+        finish()
+        @Suppress("DEPRECATION") // Its replacement can't cover a close-then-open of the same screen.
+        overridePendingTransition(0, 0)
+    }
 
     @SuppressLint("ClickableViewAccessibility") // The button still performs its own click.
     private fun setUpPreviewButton() {

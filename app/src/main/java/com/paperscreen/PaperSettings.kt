@@ -188,6 +188,14 @@ class PaperSettings(context: Context) {
     private inline fun <reified E : Enum<E>> enumPref(key: String, default: E): E =
         prefs.getString(key, null)?.let { name -> enumValues<E>().firstOrNull { it.name == name } } ?: default
 
+    /**
+     * Puts every setting back to its default. What isn't a setting stays: whether filtering
+     * is on, a pause in progress, the home screen favourites, and which prompts were shown.
+     */
+    fun resetToDefaults() {
+        prefs.edit().apply { RESETTABLE_KEYS.forEach(::remove) }.apply()
+    }
+
     fun filterParams() = EinkFilter.Params(
         warmth = effectiveWarmth(),
         contrast = contrast,
@@ -231,6 +239,16 @@ class PaperSettings(context: Context) {
         private const val KEY_SHOW_SECONDS = "home_show_seconds"
         private const val KEY_HOME_FONT = "home_font"
         private const val KEY_HOME_PROMPTED = "home_prompt_shown"
+
+        /** Everything [resetToDefaults] clears: each setting on the settings page. */
+        private val RESETTABLE_KEYS = listOf(
+            KEY_PRESET, KEY_CUSTOM_INTERVAL, KEY_WARMTH, KEY_CONTRAST, KEY_LEVELS, KEY_POSTERIZE,
+            KEY_ON_CHANGE, KEY_GHOSTING, KEY_GHOST_OPACITY, KEY_GHOST_FADE, KEY_FULL_REFRESH,
+            KEY_FULL_REFRESH_EVERY, KEY_FLASH_DURATION,
+            KEY_NIGHT_WARMTH, KEY_NIGHT_SCHEDULE, KEY_NIGHT_START, KEY_NIGHT_END, KEY_DAY_WARMTH,
+            KEY_NIGHT_WARMTH_LEVEL, KEY_NIGHT_TRANSITION,
+            KEY_CLOCK_24H, KEY_CLOCK_SIZE, KEY_SHOW_DATE, KEY_SHOW_SECONDS, KEY_HOME_FONT,
+        )
 
         const val MIN_CUSTOM_INTERVAL_MS = 340
         const val MAX_CUSTOM_INTERVAL_MS = 2000

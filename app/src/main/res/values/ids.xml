@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- View tag keys. -->
+    <item name="tag_keep_typeface" type="id" />
+    <item name="tag_reveal_animator" type="id" />
+    <item name="tag_styled_switch" type="id" />
+</resources>

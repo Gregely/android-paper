@@ -6,8 +6,12 @@ import android.content.SharedPreferences
 /** User-tunable settings, persisted in SharedPreferences and shared by the activity and service. */
 class PaperSettings(context: Context) {
 
-    val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val appContext: Context = context.applicationContext
+
+    val prefs: SharedPreferences = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    /** Works out the warmth for the time of day when Night warmth is on. */
+    val nightWarmthSchedule: NightWarmth by lazy { NightWarmth(appContext, this) }
 
     var refreshPreset: RefreshPreset
         get() = prefs.getString(KEY_PRESET, null)
@@ -30,6 +34,52 @@ class PaperSettings(context: Context) {
     var warmth: Int
         get() = prefs.getInt(KEY_WARMTH, DEFAULT_WARMTH).coerceIn(0, 100)
         set(value) = prefs.edit().putInt(KEY_WARMTH, value.coerceIn(0, 100)).apply()
+
+    /**
+     * The warmth actually in use: the Night warmth schedule's value while it's on, otherwise
+     * the manual [warmth] slider.
+     */
+    fun effectiveWarmth(): Int = if (nightWarmth) nightWarmthSchedule.status().warmth else warmth
+
+    /** Night warmth: warmth follows the time of day, overriding [warmth]. */
+    var nightWarmth: Boolean
+        get() = prefs.getBoolean(KEY_NIGHT_WARMTH, false)
+        set(value) = prefs.edit().putBoolean(KEY_NIGHT_WARMTH, value).apply()
+
+    var nightSchedule: NightScheduleMode
+        get() = enumPref(KEY_NIGHT_SCHEDULE, NightScheduleMode.DEFAULT)
+        set(value) = prefs.edit().putString(KEY_NIGHT_SCHEDULE, value.name).apply()
+
+    /** Custom night start and end, in minutes after midnight. */
+    var nightStart: Int
+        get() = prefs.getInt(KEY_NIGHT_START, DEFAULT_NIGHT_START).coerceIn(0, NightSchedule.MINUTES_PER_DAY - 1)
+        set(value) = prefs.edit().putInt(KEY_NIGHT_START, value).apply()
+
+    var nightEnd: Int
+        get() = prefs.getInt(KEY_NIGHT_END, DEFAULT_NIGHT_END).coerceIn(0, NightSchedule.MINUTES_PER_DAY - 1)
+        set(value) = prefs.edit().putInt(KEY_NIGHT_END, value).apply()
+
+    var dayWarmth: Int
+        get() = prefs.getInt(KEY_DAY_WARMTH, DEFAULT_DAY_WARMTH).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt(KEY_DAY_WARMTH, value.coerceIn(0, 100)).apply()
+
+    var nightWarmthLevel: Int
+        get() = prefs.getInt(KEY_NIGHT_WARMTH_LEVEL, DEFAULT_NIGHT_WARMTH_LEVEL).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt(KEY_NIGHT_WARMTH_LEVEL, value.coerceIn(0, 100)).apply()
+
+    /** Blend over 30 minutes around each changeover, rather than switching instantly. */
+    var nightTransition: Boolean
+        get() = prefs.getBoolean(KEY_NIGHT_TRANSITION, true)
+        set(value) = prefs.edit().putBoolean(KEY_NIGHT_TRANSITION, value).apply()
+
+    /** Last seen Night Light state (-1 unknown, 0 off, 1 on) and when it last switched. */
+    var nightLightState: Int
+        get() = prefs.getInt(KEY_NIGHT_LIGHT_STATE, -1)
+        set(value) = prefs.edit().putInt(KEY_NIGHT_LIGHT_STATE, value).apply()
+
+    var nightLightFlipAt: Long
+        get() = prefs.getLong(KEY_NIGHT_LIGHT_FLIP_AT, 0L)
+        set(value) = prefs.edit().putLong(KEY_NIGHT_LIGHT_FLIP_AT, value).apply()
 
     var contrast: Int
         get() = prefs.getInt(KEY_CONTRAST, DEFAULT_CONTRAST).coerceIn(0, 100)
@@ -139,7 +189,7 @@ class PaperSettings(context: Context) {
         prefs.getString(key, null)?.let { name -> enumValues<E>().firstOrNull { it.name == name } } ?: default
 
     fun filterParams() = EinkFilter.Params(
-        warmth = warmth,
+        warmth = effectiveWarmth(),
         contrast = contrast,
         // 256 levels is one per luma value: no stepping at all.
         greyLevels = if (posterize) greyLevels else SMOOTH_LEVELS,
@@ -161,6 +211,15 @@ class PaperSettings(context: Context) {
         const val KEY_GHOST_FADE = "ghost_fade_ms"
         const val KEY_FULL_REFRESH = "full_refresh"
         const val KEY_FLASH_DURATION = "flash_duration_ms"
+        const val KEY_NIGHT_WARMTH = "night_warmth"
+        const val KEY_NIGHT_SCHEDULE = "night_schedule"
+        const val KEY_NIGHT_START = "night_start"
+        const val KEY_NIGHT_END = "night_end"
+        const val KEY_DAY_WARMTH = "night_day_warmth"
+        const val KEY_NIGHT_WARMTH_LEVEL = "night_night_warmth"
+        const val KEY_NIGHT_TRANSITION = "night_transition"
+        private const val KEY_NIGHT_LIGHT_STATE = "night_light_state"
+        private const val KEY_NIGHT_LIGHT_FLIP_AT = "night_light_flip_at"
         private const val KEY_SERVICE_PROMPTED = "service_prompt_shown"
         private const val KEY_CAPTURE_ENABLED = "capture_enabled"
         private const val KEY_SNOOZE_UNTIL = "snooze_until"
@@ -179,6 +238,10 @@ class PaperSettings(context: Context) {
         const val DEFAULT_CUSTOM_INTERVAL_MS = 500
 
         const val DEFAULT_WARMTH = 20
+        const val DEFAULT_DAY_WARMTH = 10
+        const val DEFAULT_NIGHT_WARMTH_LEVEL = 60
+        const val DEFAULT_NIGHT_START = 21 * 60
+        const val DEFAULT_NIGHT_END = 7 * 60
         const val DEFAULT_CONTRAST = 50
 
         const val MIN_LEVELS = 4

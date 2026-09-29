@@ -46,6 +46,12 @@ class WindowCapturer(
 
         /** Capture [seq] produced nothing usable (no windows reported, or an error). */
         fun onCaptureFailed(seq: Int)
+
+        /**
+         * Capture [seq] hit a secure window while secure captures were being rejected (just
+         * after unlocking). Nothing was diffed; the frame on screen is unchanged.
+         */
+        fun onCaptureRejected(seq: Int)
     }
 
     /**
@@ -81,7 +87,13 @@ class WindowCapturer(
 
     private class Shot(val target: Target, val buffer: HardwareBuffer?, val colorSpace: ColorSpace?)
 
-    private class Job(val seq: Int, val targets: List<Target>, val width: Int, val height: Int) {
+    private class Job(
+        val seq: Int,
+        val targets: List<Target>,
+        val width: Int,
+        val height: Int,
+        val rejectSecure: Boolean,
+    ) {
         val shots = ArrayList<Shot>(targets.size)
         var retried = false
         var sawSecureWindow = false
@@ -92,14 +104,17 @@ class WindowCapturer(
         }
     }
 
-    /** Captures [targets] (any order) and composites them into a [width]×[height] frame. */
-    fun capture(seq: Int, targets: List<Target>, width: Int, height: Int) = worker.post {
+    /**
+     * Captures [targets] (any order) and composites them into a [width]×[height] frame. With
+     * [rejectSecure], a capture that hits a secure window is dropped instead of shown.
+     */
+    fun capture(seq: Int, targets: List<Target>, width: Int, height: Int, rejectSecure: Boolean) = worker.post {
         activeSeq = seq
         if (targets.isEmpty()) {
             main.post { listener.onCaptureFailed(seq) }
             return@post
         }
-        captureNext(Job(seq, targets.sortedBy { it.layer }, width, height))
+        captureNext(Job(seq, targets.sortedBy { it.layer }, width, height, rejectSecure))
     }
 
     /**
@@ -185,6 +200,11 @@ class WindowCapturer(
 
     private fun composite(job: Job) {
         val seq = job.seq
+        if (job.rejectSecure && job.sawSecureWindow) {
+            job.release()
+            main.post { listener.onCaptureRejected(seq) }
+            return
+        }
         try {
             val width = job.width
             val height = job.height

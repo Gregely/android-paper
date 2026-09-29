@@ -52,8 +52,9 @@ Each refresh (`PaperScreenAccessibilityService.beginRefresh`):
    - **Full refresh** (when on; every *N* partial refreshes, 10–100, default 50): the new
      frame is shown with inverted colours for the flash duration (150–600 ms, default
      350 ms), then normally. This mimics an e-ink page turn clearing its ghosts. The first
-     frame after starting, unlocking or rotating is a full refresh too. Until it arrives,
-     the overlay shows a blank page in the paper colour. With full refresh off, every refresh
+     frame after starting or rotating is a full refresh too. Until it arrives, the overlay
+     shows a blank page in the paper colour. Unlocking is the exception (see *Lifecycle*):
+     it's a partial refresh against the frame from before the screen went off. With full refresh off, every refresh
      is partial, and the first frame simply replaces the blank page.
 
 Window screenshots cover the window's whole surface. The only position the API reports is
@@ -74,6 +75,28 @@ interval is the minimum time between refreshes. The choice is remembered.
 Ghosting, Full refresh and Refresh on change each have a switch (all on by default), and
 their sub-settings are only shown while the switch is on. Refresh on change has no
 sub-settings, so its switch stands alone. The secure-app message is always on.
+Every slider has a small circular-arrow reset button beside its value. It appears only while
+the value differs from the default, and tapping it slides the value back to the default.
+
+**Night warmth** (off by default). While on, warmth follows the time of day instead of the
+Warmth slider: *Day warmth* (0–100, default 10) by day, *Night warmth* (0–100, default 60)
+at night. With **Transition** on (the default), it shifts gradually over 30 minutes around
+each changeover. The Warmth slider then shows the warmth in use right now, dimmed, with the
+note "Controlled by Night warmth". Touching it offers to turn Night warmth off and go back to
+manual warmth. The overlay re-checks the warmth every minute, and the home screen does too.
+The schedule is one of:
+
+- **Custom:** night from *Night starts* to *Night ends* (default 9 pm to 7 am). The
+  transition is centred on each time, so warmth is halfway at 9 pm.
+- **Sunrise/sunset:** apps can't get the location Android's Night Light uses without a
+  location permission. So, if Night Light is itself set to *Sunset to sunrise*, PaperScreen
+  follows its on/off state (a readable system setting). Only the switch itself is visible,
+  so the transition starts when Night Light switches rather than being centred on sunset.
+  Otherwise, sunrise and sunset are estimated with the NOAA formulae for the reference city
+  of the phone's time zone (from the tz database's `zone1970.tab`, bundled as
+  `assets/tz_coordinates.txt`). That's usually within a few minutes, but in a wide time zone
+  it can be off by 30 minutes or more if you're far from that city. The settings screen shows
+  which source is in use and the estimated times.
 
 **Refresh on change.** With **Refresh only when the screen changes** on (the default),
 refreshes are triggered by accessibility events that usually mean something visible changed:
@@ -113,8 +136,16 @@ same code over a `PixelCopy` snapshot of its own window.
   and applied as soon as it does. On Android 14 the user can swipe the notification away;
   filtering keeps running.
 - **Screen off / locked:** capture pauses and the overlay window is removed (accessibility
-  overlays would otherwise cover the lock screen). On unlock, a fresh overlay window is
-  created and shows a blank page until the first capture replaces it with a full refresh.
+  overlays would otherwise cover the lock screen). The last frame is kept. On unlock, a fresh
+  overlay window shows that frame until the first capture updates it with a partial refresh.
+- **Unlock grace period:** the lock screen and its unlock transition are `FLAG_SECURE`, so
+  the first captures after unlocking would look like a secure app. For 1.5 seconds from
+  whichever comes first of the screen turning on and the unlock, a capture that meets a
+  secure window is dropped (the frame on screen is left alone) and retried 150 ms later, and
+  the secure-app button isn't shown. No full refresh happens in that window either. One
+  that's due waits for the next capture after it. If the grace period has already run out at
+  unlock (for example, while a PIN was being typed), the unlock starts it again. A real
+  secure app that's still open afterwards is handled as usual.
   Resuming doesn't rely on the `ACTION_USER_PRESENT` broadcast alone: display-state changes
   and the accessibility events that follow an unlock also check "screen on, unlocked, should
   be filtering" and bring the overlay back.

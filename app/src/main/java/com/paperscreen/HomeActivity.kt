@@ -91,7 +91,11 @@ class HomeActivity : Activity() {
     private val sectionKeys by lazy { LocaleSectionKeys(Locale.getDefault()) }
 
     private val timeReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) = updateClock()
+        override fun onReceive(context: Context, intent: Intent) {
+            updateClock()
+            // Night warmth shifts the tint through the evening and morning.
+            if (settings.nightWarmth) applyColors()
+        }
     }
 
     /** Ticks on each second boundary while seconds are shown. */
@@ -483,7 +487,7 @@ class HomeActivity : Activity() {
 
     /** White page and #333 ink, tinted like the filter's output so both match. */
     private fun applyColors() {
-        val warmth = settings.warmth
+        val warmth = settings.effectiveWarmth()
         paper = EinkFilter.tint(0xFF, warmth)
         ink = EinkFilter.tint(0x33, warmth)
         faintInk = Color.argb(0x80, Color.red(ink), Color.green(ink), Color.blue(ink))

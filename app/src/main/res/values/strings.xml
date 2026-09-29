@@ -61,6 +61,29 @@
     <string name="not_now">Not now</string>
     <string name="start_failed">Couldn\'t start PaperScreen. Make sure its accessibility service is on, then try again.</string>
 
+    <string name="reset_to_default">Reset %1$s to default</string>
+    <string name="warmth_controlled">Controlled by Night warmth</string>
+    <string name="warmth_override_title">Night warmth is on</string>
+    <string name="warmth_override_message">Warmth is following the Night warmth schedule. Turn Night warmth off and go back to setting warmth by hand?</string>
+    <string name="warmth_override_confirm">Use manual warmth</string>
+
+    <string name="section_night">Night warmth</string>
+    <string name="night_warmth">Night warmth</string>
+    <string name="night_warmth_hint">Warmer at night, cooler by day. While on, it sets the warmth instead of the Warmth slider.</string>
+    <string name="night_schedule">Schedule</string>
+    <string name="night_schedule_sun">Sunrise/sunset</string>
+    <string name="night_schedule_custom">Custom</string>
+    <string name="night_starts">Night starts</string>
+    <string name="night_ends">Night ends</string>
+    <string name="day_warmth">Day warmth</string>
+    <string name="night_warmth_level">Night warmth</string>
+    <string name="night_transition">Transition</string>
+    <string name="night_transition_hint">Shifts warmth gradually over 30 minutes around each changeover instead of switching at once.</string>
+    <string name="night_status_night_light">Following Night Light\'s sunrise/sunset schedule. Now: warmth %1$d.</string>
+    <string name="night_status_sun">Sunset %1$s, sunrise %2$s (estimated for %3$s). Now: warmth %4$d.</string>
+    <string name="night_status_polar">No sunrise or sunset today at %1$s. Now: warmth %2$d.</string>
+    <string name="night_status_custom">Now: warmth %1$d.</string>
+
     <string name="section_home">Home screen</string>
     <string name="home_screen">Use as home screen</string>
     <string name="home_screen_hint">A page-style home screen: clock, date, favourites and an app drawer, all as text. On the home screen, long-press a favourite and drag to reorder it, or release to change it. Turning this off opens the system\'s default home app setting.</string>

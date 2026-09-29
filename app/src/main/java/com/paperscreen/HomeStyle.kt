@@ -34,3 +34,14 @@ enum class HomeFont(val label: Int) {
         val DEFAULT = SERIF
     }
 }
+
+/** Where Night warmth gets its idea of night from. */
+enum class NightScheduleMode(val label: Int) {
+    SUN(R.string.night_schedule_sun),
+    CUSTOM(R.string.night_schedule_custom),
+    ;
+
+    companion object {
+        val DEFAULT = SUN
+    }
+}

@@ -95,6 +95,24 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     /** A secure window was seen in the last capture (so the message isn't repeated). */
     private var secureNoticeShown = false
 
+    /**
+     * Just after the screen turns on or unlocks, the lock screen and its transition windows
+     * are FLAG_SECURE, so captures look like a secure app. Until this time (uptime), captures
+     * that hit a secure window are dropped and the secure-app pill isn't shown.
+     */
+    private var graceUntil = 0L
+    private var captureInGrace = false
+
+    /** Paused because the screen went off: the frame is kept, so unlocking is a partial refresh. */
+    private var pausedForScreenOff = false
+
+    /** The filter settings last handed to the capturer (warmth changes with Night warmth). */
+    private var appliedParams: EinkFilter.Params? = null
+    private val warmthTick = Runnable {
+        applyFilterParams()
+        scheduleWarmthTick()
+    }
+
     /** When a "pause for 5 minutes" ends, in [SystemClock.elapsedRealtime]; 0 if not paused. */
     private var snoozedUntil = 0L
     private val endSnoozeRunnable = Runnable { endSnooze() }
@@ -169,9 +187,10 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         refreshOnChange = settings.refreshOnChange
         readRefreshStyle()
         backoffMs = 0L
-        capturer = WindowCapturer(this, Handler(thread.looper), main, this).apply {
-            filterParams = settings.filterParams()
-        }
+        capturer = WindowCapturer(this, Handler(thread.looper), main, this)
+        appliedParams = null
+        applyFilterParams()
+        scheduleWarmthTick()
 
         settings.prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         displayManager.registerDisplayListener(displayListener, main)
@@ -203,6 +222,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         seq++
         cancelScheduledRefresh()
         clearSnooze()
+        main.removeCallbacks(warmthTick)
+        appliedParams = null
         settings.prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         displayManager.unregisterDisplayListener(displayListener)
         unregisterReceiver(screenReceiver)
@@ -246,7 +267,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         phase = Phase.CAPTURING
         changedDuringCapture = false
         lastRefreshStart = SystemClock.uptimeMillis()
-        cap.capture(refresh, captureTargets(), geometry.width, geometry.height)
+        captureInGrace = lastRefreshStart < graceUntil
+        cap.capture(refresh, captureTargets(), geometry.width, geometry.height, rejectSecure = captureInGrace)
     }
 
     /** Every reported window except accessibility overlays (ours included, if it were listed). */
@@ -260,32 +282,28 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
             }
 
     override fun onFrameProcessed(seq: Int, update: WindowCapturer.Update?, secureWindow: Boolean) {
-        if (seq != this.seq || phase != Phase.CAPTURING) return
-        noteSecureWindow(secureWindow)
+        val current = seq == this.seq && phase == Phase.CAPTURING
+        // Just after unlocking, no forced full refresh: the first good frame is a partial one,
+        // and a due full refresh waits for the next capture after the grace period.
+        val fullDue = fullRefresh && !captureInGrace && partialsSinceFull >= fullRefreshEvery
+        // The capturer has already recorded this frame as the one on screen, so it's written
+        // into the frame even when the refresh itself was abandoned (e.g. the screen went off
+        // mid-capture); otherwise the next diff would be taken against pixels never shown.
+        val applied = update?.takeIf { it.epoch == frameEpoch }?.let {
+            applyUpdate(it, withGhosts = current && ghosting && !fullDue)
+        }
+        if (!current) {
+            if (applied != null) overlay?.view?.frameChanged()
+            return
+        }
+        if (!captureInGrace) noteSecureWindow(secureWindow)
         val view = overlay?.view
-        if (view == null || update == null || update.epoch != frameEpoch) {
+        if (view == null || applied == null) {
             finishRefresh(changed = false)
             return
         }
-        var bitmap = frameBitmap
-        val firstFrame = bitmap == null || bitmap.width != update.width || bitmap.height != update.height
-        if (bitmap == null || firstFrame) {
-            bitmap = Bitmap.createBitmap(update.width, update.height, Bitmap.Config.ARGB_8888)
-                .apply { setHasAlpha(false) }
-            frameBitmap = bitmap
-            view.setFrame(bitmap)
-        }
         // With full refreshes off, even the first frame just replaces the blank page.
-        val full = fullRefresh && (firstFrame || partialsSinceFull >= fullRefreshEvery)
-        // Keep what the changed regions showed before, for the partial-refresh ghost trail.
-        val ghosts = if (full || firstFrame || !ghosting) emptyList() else update.bands.map { band ->
-            OverlayWindow.FrameView.Ghost(
-                Bitmap.createBitmap(bitmap, band.left, band.top, band.width, band.height),
-                band.left,
-                band.top,
-            )
-        }
-        update.applyTo(bitmap)
+        val full = fullDue || (fullRefresh && applied.firstFrame && !captureInGrace)
         logUpdate(update, full)
 
         if (full) {
@@ -300,9 +318,33 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         } else {
             // Partial refresh: only the changed pixels were written (ghosting, if on).
             partialsSinceFull++
-            view.frameChanged(ghosts)
+            view.frameChanged(applied.ghosts)
             finishRefresh(changed = true)
         }
+    }
+
+    private class Applied(val firstFrame: Boolean, val ghosts: List<OverlayWindow.FrameView.Ghost>)
+
+    /** Writes [update] into the frame bitmap (creating it for a first frame). */
+    private fun applyUpdate(update: WindowCapturer.Update, withGhosts: Boolean): Applied {
+        var bitmap = frameBitmap
+        val firstFrame = bitmap == null || bitmap.width != update.width || bitmap.height != update.height
+        if (bitmap == null || firstFrame) {
+            bitmap = Bitmap.createBitmap(update.width, update.height, Bitmap.Config.ARGB_8888)
+                .apply { setHasAlpha(false) }
+            frameBitmap = bitmap
+            overlay?.view?.setFrame(bitmap)
+        }
+        // Keep what the changed regions showed before, for the partial-refresh ghost trail.
+        val ghosts = if (firstFrame || !withGhosts) emptyList() else update.bands.map { band ->
+            OverlayWindow.FrameView.Ghost(
+                Bitmap.createBitmap(bitmap, band.left, band.top, band.width, band.height),
+                band.left,
+                band.top,
+            )
+        }
+        update.applyTo(bitmap)
+        return Applied(firstFrame, ghosts)
     }
 
     /** `adb logcat -s PaperScreen` shows how much of the screen each refresh rewrote. */
@@ -318,6 +360,13 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
                 percent,
             ),
         )
+    }
+
+    /** Just unlocked and the lock screen was still in the capture: try again shortly. */
+    override fun onCaptureRejected(seq: Int) {
+        if (seq != this.seq || phase != Phase.CAPTURING) return
+        phase = Phase.IDLE
+        requestRefresh(GRACE_RETRY_MS)
     }
 
     override fun onCaptureFailed(seq: Int) {
@@ -347,7 +396,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private fun noteSecureWindow(present: Boolean) {
         if (present && !secureNoticeShown && overlay != null) {
             val pill = securePill ?: SecurePill(this) { snooze() }.also { securePill = it }
-            pill.show(settings.warmth, SECURE_MESSAGE_MS)
+            pill.show(settings.effectiveWarmth(), SECURE_MESSAGE_MS)
         }
         secureNoticeShown = present
     }
@@ -367,12 +416,22 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
 
     // --- Pause / resume / snooze / geometry ------------------------------------------------
 
-    private fun pause() {
+    /**
+     * Stops refreshing and removes the overlay (accessibility overlays sit above the lock
+     * screen); resume() creates a fresh window rather than trusting a hidden one to come back.
+     * For the screen going off, [keepFrame] keeps the last frame so unlocking shows it and
+     * refreshes only what changed; otherwise (a pause) it's dropped for a clean full refresh.
+     */
+    private fun pause(keepFrame: Boolean = false) {
         if (phase == Phase.PAUSED) return
         phase = Phase.PAUSED
-        clearFrame()
-        // Accessibility overlays sit above the lock screen, so remove it entirely; resume()
-        // creates a fresh window rather than trusting a hidden one to come back.
+        pausedForScreenOff = keepFrame
+        if (keepFrame) {
+            seq++
+            cancelScheduledRefresh()
+        } else {
+            clearFrame()
+        }
         hideOverlay()
         Log.i(TAG, "paused")
     }
@@ -384,8 +443,12 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         if (!showOverlay()) return false
         phase = Phase.IDLE
         secureNoticeShown = false
-        clearFrame() // A blank page until the first capture arrives.
-        // Let unlock animations finish before the first capture.
+        // Coming back from the screen being off: the lock screen may still be in the first
+        // captures (in case the screen-on/unlock broadcasts were late or missed).
+        if (pausedForScreenOff) startGrace()
+        pausedForScreenOff = false
+        // The kept frame (or a blank page) shows until the first capture; let unlock
+        // animations finish first.
         requestRefresh(RESUME_DELAY_MS)
         Log.i(TAG, "resumed")
         return true
@@ -414,9 +477,39 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
             return false
         }
         window.view.blankColor = EinkFilter.paperColor(settings.filterParams())
+        window.view.setFrame(frameBitmap)
         overlay = window
         applyGhostStyle()
         return true
+    }
+
+    /**
+     * Starts the post-unlock grace period, from whichever of screen-on and unlock comes first.
+     * If it has already run out by the time the phone unlocks (say, while typing a PIN), the
+     * unlock starts it again, since the unlock animation is what it's there to cover.
+     */
+    private fun startGrace() {
+        val now = SystemClock.uptimeMillis()
+        if (now < graceUntil) return
+        graceUntil = now + GRACE_MS
+    }
+
+    /** Hands the current filter settings (warmth may follow Night warmth) to the capturer. */
+    private fun applyFilterParams() {
+        val params = settings.filterParams()
+        if (params == appliedParams) return
+        appliedParams = params
+        capturer?.filterParams = params
+        overlay?.view?.blankColor = EinkFilter.paperColor(params)
+        requestRefresh()
+    }
+
+    /** While Night warmth is on, re-checks the warmth just after each minute boundary. */
+    private fun scheduleWarmthTick() {
+        main.removeCallbacks(warmthTick)
+        if (capturing && settings.nightWarmth) {
+            main.postDelayed(warmthTick, 60_000 - System.currentTimeMillis() % 60_000 + 500)
+        }
     }
 
     private fun readRefreshStyle() {
@@ -484,8 +577,10 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private fun onGeometryChanged(newGeometry: DisplayGeometry) {
         geometry = newGeometry
         overlay?.resize(newGeometry)
+        // The old frame no longer lines up with anything, including one kept while the
+        // screen was off.
+        clearFrame()
         if (phase == Phase.PAUSED) return
-        clearFrame() // The old frame no longer lines up with anything.
         phase = Phase.IDLE
         requestRefresh(ROTATION_DELAY_MS)
     }
@@ -497,10 +592,16 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                Intent.ACTION_SCREEN_OFF -> pause()
+                Intent.ACTION_SCREEN_OFF -> pause(keepFrame = true)
                 // The keyguard can still report itself locked for a moment after USER_PRESENT.
-                Intent.ACTION_USER_PRESENT -> if (snoozeExpired()) endSnooze() else resume()
-                Intent.ACTION_SCREEN_ON -> resumeIfDue()
+                Intent.ACTION_USER_PRESENT -> {
+                    startGrace()
+                    if (snoozeExpired()) endSnooze() else resume()
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    startGrace()
+                    resumeIfDue()
+                }
             }
         }
     }
@@ -508,7 +609,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayChanged(displayId: Int) {
             if (displayId != display.displayId) return
-            // Also fires when the display turns on.
+            // Also fires when the display turns on, sometimes before the broadcast arrives.
+            if (phase == Phase.PAUSED && display.state == Display.STATE_ON) startGrace()
             resumeIfDue()
             val newGeometry = DisplayGeometry.of(display)
             if (newGeometry != geometry) onGeometryChanged(newGeometry)
@@ -528,11 +630,13 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
                 }
             }
             PaperSettings.KEY_WARMTH, PaperSettings.KEY_CONTRAST, PaperSettings.KEY_LEVELS,
-            PaperSettings.KEY_POSTERIZE -> {
-                val params = settings.filterParams()
-                capturer?.filterParams = params
-                overlay?.view?.blankColor = EinkFilter.paperColor(params)
-                requestRefresh()
+            PaperSettings.KEY_POSTERIZE, PaperSettings.KEY_NIGHT_SCHEDULE, PaperSettings.KEY_NIGHT_START,
+            PaperSettings.KEY_NIGHT_END, PaperSettings.KEY_DAY_WARMTH, PaperSettings.KEY_NIGHT_WARMTH_LEVEL,
+            PaperSettings.KEY_NIGHT_TRANSITION,
+            -> applyFilterParams()
+            PaperSettings.KEY_NIGHT_WARMTH -> {
+                applyFilterParams()
+                scheduleWarmthTick()
             }
             PaperSettings.KEY_ON_CHANGE -> {
                 refreshOnChange = settings.refreshOnChange
@@ -614,6 +718,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         private const val MAX_BACKOFF_MS = 1_000L
         private const val SNOOZE_MS = 5 * 60 * 1_000L
         private const val SECURE_MESSAGE_MS = 6_000L
+        private const val GRACE_MS = 1_500L
+        private const val GRACE_RETRY_MS = 150L
 
         private const val CHANNEL_ID = "paperscreen"
         private const val NOTIFICATION_ID = 1

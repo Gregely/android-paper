@@ -170,6 +170,14 @@
                 style="@style/Hint"
                 android:text="@string/warmth_hint" />
 
+            <!-- Shown while Night warmth sets the warmth instead of this slider. -->
+            <TextView
+                android:id="@+id/warmth_controlled"
+                style="@style/Hint"
+                android:text="@string/warmth_controlled"
+                android:textColor="@color/accent"
+                android:visibility="gone" />
+
             <SeekBar
                 android:id="@+id/warmth_seek"
                 style="@style/Slider" />
@@ -227,6 +235,149 @@
                     style="@style/Slider" />
 
             </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            style="@style/Card"
+            android:animateLayoutChanges="true">
+
+            <TextView
+                style="@style/CardTitle"
+                android:text="@string/section_night" />
+
+            <Switch
+                android:id="@+id/night_switch"
+                style="@style/FeatureSwitch"
+                android:text="@string/night_warmth" />
+
+            <TextView
+                style="@style/Hint"
+                android:text="@string/night_warmth_hint" />
+
+            <!-- Sub-settings: shown only while Night warmth is on. -->
+            <LinearLayout
+                android:id="@+id/night_options"
+                style="@style/FeatureOptions"
+                android:animateLayoutChanges="true">
+
+                <TextView
+                    style="@style/SectionLabel"
+                    android:layout_width="match_parent"
+                    android:text="@string/night_schedule" />
+
+                <!-- One radio button per NightScheduleMode, added in code. -->
+                <RadioGroup
+                    android:id="@+id/night_schedule_group"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal" />
+
+                <!-- Only for the Custom schedule. -->
+                <LinearLayout
+                    android:id="@+id/night_custom_times"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            style="@style/SectionLabel"
+                            android:labelFor="@id/night_start_button"
+                            android:text="@string/night_starts" />
+
+                        <Button
+                            android:id="@+id/night_start_button"
+                            style="@android:style/Widget.Material.Button.Borderless.Colored"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:minWidth="96dp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            style="@style/SectionLabel"
+                            android:labelFor="@id/night_end_button"
+                            android:text="@string/night_ends" />
+
+                        <Button
+                            android:id="@+id/night_end_button"
+                            style="@android:style/Widget.Material.Button.Borderless.Colored"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:minWidth="96dp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/SectionLabel"
+                        android:labelFor="@id/day_warmth_seek"
+                        android:text="@string/day_warmth" />
+
+                    <TextView
+                        android:id="@+id/day_warmth_value"
+                        style="@style/SectionValue" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/day_warmth_seek"
+                    style="@style/Slider" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/SectionLabel"
+                        android:labelFor="@id/night_warmth_seek"
+                        android:text="@string/night_warmth_level" />
+
+                    <TextView
+                        android:id="@+id/night_warmth_value"
+                        style="@style/SectionValue" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/night_warmth_seek"
+                    style="@style/Slider" />
+
+                <Switch
+                    android:id="@+id/night_transition_switch"
+                    style="@style/FeatureSwitch"
+                    android:text="@string/night_transition" />
+
+                <TextView
+                    style="@style/Hint"
+                    android:text="@string/night_transition_hint" />
+
+                <TextView
+                    android:id="@+id/night_status"
+                    style="@style/Hint"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="8dp"
+                    android:textColor="@color/ink" />
+            </LinearLayout>
+
+            <Space
+                android:layout_width="match_parent"
+                android:layout_height="16dp" />
         </LinearLayout>
 
         <LinearLayout

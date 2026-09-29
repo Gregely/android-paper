@@ -10,6 +10,7 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RectF
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -50,11 +51,6 @@ class OverlayWindow(service: AccessibilityService) {
         runCatching { windowManager.removeViewImmediate(view) }
     }
 
-    /** A GONE root view makes the window manager hide the window entirely. */
-    fun setVisible(visible: Boolean) {
-        view.visibility = if (visible) View.VISIBLE else View.GONE
-    }
-
     private fun layoutParams(geometry: DisplayGeometry) = WindowManager.LayoutParams(
         geometry.width,
         geometry.height,
@@ -81,6 +77,13 @@ class OverlayWindow(service: AccessibilityService) {
      * calls [frameChanged]. A full refresh briefly draws it with inverted colours.
      */
     class FrameView(context: Context) : View(context) {
+
+        /** The previous content of a changed region, faded out over the new content. */
+        class Ghost(val bitmap: Bitmap, val left: Int, val top: Int)
+
+        private var ghosts: List<Ghost> = emptyList()
+        private var ghostStart = 0L
+        private val ghostPaint = Paint().apply { isFilterBitmap = false }
 
         private var frame: Bitmap? = null
         private var inverted = false
@@ -121,14 +124,24 @@ class OverlayWindow(service: AccessibilityService) {
         fun setFrame(bitmap: Bitmap?) {
             frame = bitmap
             inverted = false
+            ghosts = emptyList()
             invalidate()
         }
 
-        /** Redraws after the frame bitmap's pixels were changed in place. */
-        fun frameChanged() = invalidate()
+        /**
+         * Redraws after the frame bitmap's pixels were changed in place. [changed] holds what
+         * those regions showed before; it lingers faintly and fades out, the way a real e-ink
+         * partial refresh leaves a brief trail of the previous image.
+         */
+        fun frameChanged(changed: List<Ghost> = emptyList()) {
+            ghosts = changed
+            ghostStart = SystemClock.uptimeMillis()
+            invalidate()
+        }
 
         fun setInverted(invert: Boolean) {
             inverted = invert
+            ghosts = emptyList()
             invalidate()
         }
 
@@ -154,8 +167,30 @@ class OverlayWindow(service: AccessibilityService) {
                     -location[1].toFloat(),
                     if (inverted) invertPaint else paint,
                 )
+                drawGhosts(canvas)
             }
             message?.let { drawMessage(canvas, it) }
+        }
+
+        private fun drawGhosts(canvas: Canvas) {
+            if (ghosts.isEmpty()) return
+            val t = (SystemClock.uptimeMillis() - ghostStart) / GHOST_MS.toFloat()
+            if (t >= 1f) {
+                ghosts = emptyList()
+                return
+            }
+            // Ease out: most of the trail is gone within the first ~100 ms.
+            val remaining = (1f - t) * (1f - t)
+            ghostPaint.alpha = (GHOST_ALPHA * remaining * 255).toInt()
+            for (ghost in ghosts) {
+                canvas.drawBitmap(
+                    ghost.bitmap,
+                    (ghost.left - location[0]).toFloat(),
+                    (ghost.top - location[1]).toFloat(),
+                    ghostPaint,
+                )
+            }
+            postInvalidateOnAnimation()
         }
 
         private fun drawMessage(canvas: Canvas, text: String) {
@@ -175,6 +210,10 @@ class OverlayWindow(service: AccessibilityService) {
     companion object {
         /** How long a full refresh shows the inverted frame. */
         const val INVERT_MS = 80L
+
+        /** Partial-refresh ghosting: starting opacity of the old content, and fade time. */
+        private const val GHOST_ALPHA = 0.3f
+        private const val GHOST_MS = 300L
 
         /** Swaps light and dark, keeping alpha. */
         val INVERT = ColorMatrix(

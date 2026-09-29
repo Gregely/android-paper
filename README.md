@@ -43,7 +43,11 @@ Each refresh (`PaperScreenAccessibilityService.beginRefresh`):
    the rows that changed, as bands from the leftmost to the rightmost changed pixel.
 3. **Update**, as one of two kinds of refresh:
    - **Partial refresh** (usual): the changed bands are written into the frame on screen in
-     place. There's no flash or transition, and pixels that didn't change are never touched.
+     place, and pixels that didn't change are never touched. What the changed regions showed
+     before lingers faintly (30%) and fades out over ~300 ms. That's the ghost trail a real
+     e-ink partial refresh leaves, and it makes the refreshed area visible. Rewriting only
+     the changed pixels would otherwise look identical to replacing the whole frame, since
+     the unchanged pixels keep the same values either way.
    - **Full refresh** (every *N* partial refreshes; 10–100, default 50): the new frame is
      shown with inverted colours for ~80 ms, then normally. This mimics e-ink's
      ghosting-clear cycle. The first frame after starting, unlocking or rotating is always a
@@ -57,7 +61,11 @@ keyboard, navigation bar) to their edge, and everything else centred (dialog sha
 **The 333 ms limit.** The system refuses a second screenshot of the same window within
 333 ms. Different windows can be captured back to back, so windows are captured one at a
 time and each waits out its own interval. In practice the fastest refresh is about every
-340 ms, even with the interval slider set lower.
+340 ms, so the Realtime, Fast and Responsive presets currently all refresh at that rate.
+
+**Refresh interval presets.** Realtime (0 ms), Fast (100), Responsive (250, the default),
+Reading (500), Slow (1000), E-ink (1500), or Custom (0–1500 ms, in 50 ms steps). The interval
+is the minimum time between refreshes.
 
 **Refresh on change.** With **Refresh only when the screen changes** on (the default),
 refreshes are triggered by accessibility events that usually mean something visible changed:
@@ -92,9 +100,12 @@ same code over a `PixelCopy` snapshot of its own window.
   overlay and brings it back after five minutes (sooner with **Resume**). If the phone sleeps
   through the end of the pause, it resumes on the next unlock. On Android 14 the user can
   swipe the notification away; filtering keeps running.
-- **Screen off / locked:** capture pauses and the overlay hides (accessibility overlays would
-  otherwise cover the lock screen). On unlock (`ACTION_USER_PRESENT`) the overlay comes back
-  as a blank page, and the first capture replaces it with a full refresh.
+- **Screen off / locked:** capture pauses and the overlay window is removed (accessibility
+  overlays would otherwise cover the lock screen). On unlock, a fresh overlay window is
+  created and shows a blank page until the first capture replaces it with a full refresh.
+  Resuming doesn't rely on the `ACTION_USER_PRESENT` broadcast alone: display-state changes
+  and the accessibility events that follow an unlock also check "screen on, unlocked, should
+  be filtering" and bring the overlay back.
 - **Rotation / resolution change:** a `DisplayListener` resizes the overlay, shows a blank
   page in place of the stale frame, and does a full refresh once the rotation animation is
   done.
@@ -154,6 +165,9 @@ This is a prototype of per-window capture. These gaps come from what the platfor
   owns the window, on its UI thread. A busy app delays the refresh (up to a 500 ms timeout per
   window, after which that window is drawn black).
 - **About 340 ms minimum refresh** (see above).
+- **Checking what partial refreshes rewrite:** run `adb shell setprop log.tag.PaperScreen DEBUG`,
+  then `adb logcat -s PaperScreen`. Each refresh logs its kind, the number of bands, and the
+  share of the screen rewritten. Pause and resume are logged at info level.
 - **Refresh on change depends on accessibility events.** Content that changes without
   reporting it (video, games, custom-drawn animations) only updates on the next event, e.g.
   a tap. Turn "refresh on change" off to refresh on every interval.

@@ -12,6 +12,8 @@ import android.provider.Settings
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
@@ -26,6 +28,7 @@ class SettingsActivity : Activity() {
     private lateinit var masterSwitch: Switch
     private lateinit var statusText: TextView
     private lateinit var intervalValue: TextView
+    private lateinit var customInterval: View
     private lateinit var warmthValue: TextView
     private lateinit var contrastValue: TextView
     private lateinit var levelsValue: TextView
@@ -61,6 +64,7 @@ class SettingsActivity : Activity() {
             if (checked) beginStart() else PaperScreenAccessibilityService.stopCapture()
         }
 
+        setUpIntervalPresets()
         setUpSliders()
         setUpOnChangeSwitch()
         setUpPreviewButton()
@@ -200,16 +204,55 @@ class SettingsActivity : Activity() {
         state == PaperScreenAccessibilityService.State.RUNNING ||
             state == PaperScreenAccessibilityService.State.SNOOZED
 
-    private fun setUpSliders() {
-        val step = PaperSettings.INTERVAL_STEP_MS
-        val minInterval = PaperSettings.MIN_INTERVAL_MS
+    /** One radio button per preset; Custom reveals its own slider. Both are saved as they change. */
+    private fun setUpIntervalPresets() {
+        val group = findViewById<RadioGroup>(R.id.interval_presets)
+        customInterval = findViewById(R.id.custom_interval)
+        val customValue = findViewById<TextView>(R.id.custom_interval_value)
+        val minHeight = (48 * resources.displayMetrics.density).toInt()
+        var selectedId = View.NO_ID
+        for (preset in RefreshPreset.entries) {
+            val button = RadioButton(this).apply {
+                id = View.generateViewId()
+                tag = preset
+                text = preset.ms?.let { getString(R.string.preset_option, getString(preset.label), it) }
+                    ?: getString(preset.label)
+                textSize = 15f
+                setTextColor(getColor(R.color.ink))
+                this.minHeight = minHeight
+            }
+            group.addView(button, RadioGroup.LayoutParams.MATCH_PARENT, RadioGroup.LayoutParams.WRAP_CONTENT)
+            if (preset == settings.refreshPreset) selectedId = button.id
+        }
+        group.check(selectedId)
+        group.setOnCheckedChangeListener { radios, checkedId ->
+            val preset = radios.findViewById<RadioButton>(checkedId)?.tag as? RefreshPreset
+                ?: return@setOnCheckedChangeListener
+            settings.refreshPreset = preset
+            renderInterval()
+        }
+
+        val step = PaperSettings.CUSTOM_INTERVAL_STEP_MS
         bindSlider(
-            R.id.interval_seek,
-            max = (PaperSettings.MAX_INTERVAL_MS - minInterval) / step,
-            initial = (settings.refreshIntervalMs - minInterval) / step,
-            save = { settings.refreshIntervalMs = minInterval + it * step },
-            render = { intervalValue.text = getString(R.string.refresh_interval_value, minInterval + it * step) },
+            R.id.custom_interval_seek,
+            max = PaperSettings.MAX_CUSTOM_INTERVAL_MS / step,
+            initial = settings.customIntervalMs / step,
+            save = {
+                settings.customIntervalMs = it * step
+                renderInterval()
+            },
+            render = { customValue.text = getString(R.string.custom_interval_value, it * step) },
         )
+        renderInterval()
+    }
+
+    private fun renderInterval() {
+        val preset = settings.refreshPreset
+        customInterval.visibility = if (preset == RefreshPreset.CUSTOM) View.VISIBLE else View.GONE
+        intervalValue.text = getString(R.string.refresh_interval_value, getString(preset.label), settings.refreshIntervalMs)
+    }
+
+    private fun setUpSliders() {
         bindSlider(
             R.id.warmth_seek,
             max = 100,

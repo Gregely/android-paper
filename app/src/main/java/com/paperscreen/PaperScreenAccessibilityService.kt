@@ -22,6 +22,7 @@ import android.os.PowerManager
 import android.os.Process
 import android.os.SystemClock
 import android.text.format.DateFormat
+import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
@@ -96,7 +97,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private var snoozedUntil = 0L
     private val endSnoozeRunnable = Runnable { endSnooze() }
 
-    private var intervalMs = PaperSettings.DEFAULT_INTERVAL_MS
+    private var intervalMs = RefreshPreset.DEFAULT.ms ?: 0
     private var refreshOnChange = true
     private var fullRefreshEvery = PaperSettings.DEFAULT_FULL_REFRESH_EVERY
     private var scheduledAt = NOT_SCHEDULED
@@ -105,7 +106,9 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         beginRefresh()
     }
 
-    private val isCapturing: Boolean get() = overlay != null
+    /** Filtering is on (the overlay itself only exists while not paused). */
+    private var capturing = false
+    private val isCapturing: Boolean get() = capturing
     private val isSnoozed: Boolean get() = snoozedUntil != 0L
 
     // --- Accessibility service lifecycle --------------------------------------------------
@@ -124,6 +127,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Unlocking produces window events too, so this doubles as a safety net for resuming.
+        resumeIfDue()
         // The config only subscribes to event types that usually mean something visible changed.
         if (isCapturing && refreshOnChange) onContentChanged()
     }
@@ -153,16 +158,6 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private fun startCapture(): Boolean {
         if (isCapturing) return true
         geometry = DisplayGeometry.of(display)
-        val window = OverlayWindow(this)
-        try {
-            window.attach(geometry)
-        } catch (e: RuntimeException) {
-            notifyState()
-            return false
-        }
-        window.setVisible(false)
-        overlay = window
-
         val thread = HandlerThread("PaperScreen-capture", Process.THREAD_PRIORITY_DISPLAY).apply { start() }
         workerThread = thread
         intervalMs = settings.refreshIntervalMs
@@ -172,7 +167,6 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         capturer = WindowCapturer(this, Handler(thread.looper), main, this).apply {
             filterParams = settings.filterParams()
         }
-        window.view.blankColor = EinkFilter.paperColor(settings.filterParams())
 
         settings.prefs.registerOnSharedPreferenceChangeListener(prefsListener)
         displayManager.registerDisplayListener(displayListener, main)
@@ -183,8 +177,13 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         }
         registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
 
+        capturing = true
+        phase = Phase.PAUSED
+        if (isScreenUsable() && !resume()) {
+            stopCapture()
+            return false
+        }
         settings.captureEnabled = true
-        if (isScreenUsable()) resume()
         updateNotification()
         notifyState()
         return true
@@ -192,7 +191,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
 
     /** Tears the session down; the accessibility service itself stays enabled and idle. */
     private fun stopCapture() {
-        val window = overlay ?: return
+        if (!capturing) return
+        capturing = false
         phase = Phase.PAUSED
         seq++
         cancelScheduledRefresh()
@@ -200,8 +200,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         settings.prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         displayManager.unregisterDisplayListener(displayListener)
         unregisterReceiver(screenReceiver)
-        window.detach()
-        overlay = null
+        hideOverlay()
         capturer?.release()
         capturer = null
         workerThread?.quitSafely()
@@ -270,9 +269,19 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
             frameBitmap = bitmap
             view.setFrame(bitmap)
         }
+        val full = firstFrame || partialsSinceFull >= fullRefreshEvery
+        // Keep what the changed regions showed before, for the partial-refresh ghost trail.
+        val ghosts = if (full) emptyList() else update.bands.map { band ->
+            OverlayWindow.FrameView.Ghost(
+                Bitmap.createBitmap(bitmap, band.left, band.top, band.width, band.height),
+                band.left,
+                band.top,
+            )
+        }
         update.applyTo(bitmap)
+        logUpdate(update, full)
 
-        if (firstFrame || partialsSinceFull >= fullRefreshEvery) {
+        if (full) {
             // Full refresh: flash the new frame inverted, then show it.
             partialsSinceFull = 0
             view.setInverted(true)
@@ -282,11 +291,26 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
                 finishRefresh(changed = true)
             }, OverlayWindow.INVERT_MS)
         } else {
-            // Partial refresh: the changed pixels are already in place.
+            // Partial refresh: only the changed pixels were written, and they ghost briefly.
             partialsSinceFull++
-            view.frameChanged()
+            view.frameChanged(ghosts)
             finishRefresh(changed = true)
         }
+    }
+
+    /** `adb logcat -s PaperScreen` shows how much of the screen each refresh rewrote. */
+    private fun logUpdate(update: WindowCapturer.Update, full: Boolean) {
+        if (!Log.isLoggable(TAG, Log.DEBUG)) return
+        val changed = update.bands.sumOf { it.width.toLong() * it.height }
+        val percent = 100.0 * changed / (update.width.toLong() * update.height)
+        Log.d(
+            TAG,
+            "%s refresh: %d band(s), %.1f%% of the screen rewritten".format(
+                if (full) "full" else "partial",
+                update.bands.size,
+                percent,
+            ),
+        )
     }
 
     override fun onCaptureFailed(seq: Int) {
@@ -336,19 +360,56 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         if (phase == Phase.PAUSED) return
         phase = Phase.PAUSED
         clearFrame()
-        // Accessibility overlays sit above the lock screen, so hide it entirely.
-        overlay?.setVisible(false)
+        // Accessibility overlays sit above the lock screen, so remove it entirely; resume()
+        // creates a fresh window rather than trusting a hidden one to come back.
+        hideOverlay()
+        Log.i(TAG, "paused")
     }
 
-    private fun resume() {
-        val window = overlay ?: return
-        if (phase != Phase.PAUSED || isSnoozed) return
+    /** Shows a fresh overlay (a blank page) and schedules the first capture. */
+    private fun resume(): Boolean {
+        if (!capturing || phase != Phase.PAUSED || isSnoozed) return true
+        geometry = DisplayGeometry.of(display)
+        if (!showOverlay()) return false
         phase = Phase.IDLE
         secureNoticeShown = false
         clearFrame() // A blank page until the first capture arrives.
-        window.setVisible(true)
         // Let unlock animations finish before the first capture.
         requestRefresh(RESUME_DELAY_MS)
+        Log.i(TAG, "resumed")
+        return true
+    }
+
+    /**
+     * Resumes if filtering should be showing but isn't: screen on, unlocked, not snoozed.
+     * Called from every signal that can follow an unlock, not just ACTION_USER_PRESENT.
+     */
+    private fun resumeIfDue() {
+        if (!capturing) return
+        if (snoozeExpired()) {
+            endSnooze()
+        } else if (phase == Phase.PAUSED && !isSnoozed && isScreenUsable()) {
+            resume()
+        }
+    }
+
+    private fun showOverlay(): Boolean {
+        hideOverlay()
+        val window = OverlayWindow(this)
+        try {
+            window.attach(geometry)
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "couldn't add the overlay", e)
+            return false
+        }
+        window.view.blankColor = EinkFilter.paperColor(settings.filterParams())
+        overlay = window
+        return true
+    }
+
+    private fun hideOverlay() {
+        overlay?.detach()
+        overlay = null
     }
 
     private fun snooze() {
@@ -394,13 +455,9 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> pause()
-                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
-                    if (snoozeExpired()) {
-                        endSnooze()
-                    } else if (intent.action == Intent.ACTION_USER_PRESENT || isScreenUsable()) {
-                        resume()
-                    }
-                }
+                // The keyguard can still report itself locked for a moment after USER_PRESENT.
+                Intent.ACTION_USER_PRESENT -> if (snoozeExpired()) endSnooze() else resume()
+                Intent.ACTION_SCREEN_ON -> resumeIfDue()
             }
         }
     }
@@ -408,6 +465,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayChanged(displayId: Int) {
             if (displayId != display.displayId) return
+            // Also fires when the display turns on.
+            resumeIfDue()
             val newGeometry = DisplayGeometry.of(display)
             if (newGeometry != geometry) onGeometryChanged(newGeometry)
         }
@@ -418,7 +477,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
-            PaperSettings.KEY_INTERVAL -> {
+            PaperSettings.KEY_PRESET, PaperSettings.KEY_CUSTOM_INTERVAL -> {
                 intervalMs = settings.refreshIntervalMs
                 if (scheduledAt != NOT_SCHEDULED) {
                     cancelScheduledRefresh()
@@ -501,6 +560,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     }
 
     companion object {
+        private const val TAG = "PaperScreen"
         private const val NOT_SCHEDULED = -1L
         private const val RESUME_DELAY_MS = 300L
         private const val ROTATION_DELAY_MS = 450L

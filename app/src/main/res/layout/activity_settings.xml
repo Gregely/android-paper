@@ -98,7 +98,6 @@
 
                 <TextView
                     style="@style/SectionLabel"
-                    android:labelFor="@id/interval_seek"
                     android:text="@string/refresh_interval" />
 
                 <TextView
@@ -106,9 +105,49 @@
                     style="@style/SectionValue" />
             </LinearLayout>
 
-            <SeekBar
-                android:id="@+id/interval_seek"
-                style="@style/Slider" />
+            <!-- One radio button per RefreshPreset, added in code. -->
+            <RadioGroup
+                android:id="@+id/interval_presets"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="vertical" />
+
+            <!-- Shown only for the Custom preset. -->
+            <LinearLayout
+                android:id="@+id/custom_interval"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/SectionLabel"
+                        android:labelFor="@id/custom_interval_seek"
+                        android:text="@string/custom_interval" />
+
+                    <TextView
+                        android:id="@+id/custom_interval_value"
+                        style="@style/SectionValue" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/custom_interval_seek"
+                    style="@style/Slider"
+                    android:layout_marginBottom="4dp" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/Hint"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="20dp"
+                android:text="@string/interval_hint" />
 
             <LinearLayout
                 android:layout_width="match_parent"

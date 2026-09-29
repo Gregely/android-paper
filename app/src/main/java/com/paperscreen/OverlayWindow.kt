@@ -22,7 +22,8 @@ import android.view.WindowManager
  * still pass touches through (app overlays are capped at 80% opacity since Android 12).
  * They also sit above the status bar, notification shade and keyboard, so those are shown
  * filtered too. The window is opaque at all times: captures are taken per window and never
- * include it. Main thread only.
+ * include it. It's only attached while there's a frame to show, never as a blank page: the
+ * service calls [attach] once the first valid capture is ready. Main thread only.
  */
 class OverlayWindow(service: AccessibilityService) {
 
@@ -31,6 +32,8 @@ class OverlayWindow(service: AccessibilityService) {
 
     val view = FrameView(service)
     private var attached = false
+
+    val isAttached: Boolean get() = attached
 
     /** Adds the window. Throws if the accessibility service is no longer connected. */
     fun attach(geometry: DisplayGeometry) {
@@ -70,7 +73,8 @@ class OverlayWindow(service: AccessibilityService) {
     }
 
     /**
-     * Draws the current frame at 1:1 screen pixels, or a blank page before the first one.
+     * Draws the current frame at 1:1 screen pixels (over the paper colour, which only shows if
+     * the window is ever up without a frame).
      * The frame bitmap is updated in place by the service (partial refreshes), which then
      * calls [frameChanged]. A full refresh briefly draws it with inverted colours.
      */

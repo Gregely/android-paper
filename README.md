@@ -52,10 +52,22 @@ Each refresh (`PaperScreenAccessibilityService.beginRefresh`):
    - **Full refresh** (when on; every *N* partial refreshes, 10–100, default 50): the new
      frame is shown with inverted colours for the flash duration (150–600 ms, default
      350 ms), then normally. This mimics an e-ink page turn clearing its ghosts. The first
-     frame after starting or rotating is a full refresh too. Until it arrives, the overlay
-     shows a blank page in the paper colour. Unlocking is the exception (see *Lifecycle*):
-     it's a partial refresh against the frame from before the screen went off. With full refresh off, every refresh
-     is partial, and the first frame simply replaces the blank page.
+     frame after starting or rotating is a full refresh too. Unlocking is the exception (see
+     *Lifecycle*): it's a partial refresh against the frame from before the screen went off.
+     With full refresh off, every refresh is partial.
+
+**No blank pages.** The overlay window is only on screen while it has a real frame to show.
+Until the first valid capture after starting (or after a rotation, or a secure app), there's
+no overlay at all, and you see the phone as it is. The overlay appears with its first frame
+already in it. Every filtered frame is checked before it's used. A frame that comes out as a
+single flat colour (every pixel within 4 grey levels) means the capture didn't really work,
+for example every window failed or the GPU read back nothing. Such a frame is skipped, the
+frame on screen stays, and the next cycle tries again. Skipped and failed captures are
+logged: `adb logcat -s PaperScreen` shows lines like `capture skipped: the frame came out a
+single colour (#E1E1DD)` or `capture skipped: no windows reported`. If no valid frame has
+been shown within **5 seconds** of turning filtering on, it turns itself off again and a
+toast says **"PaperScreen couldn't start — try again"**. The clock only runs while the
+overlay is due: time with the screen off, locked, paused or in a secure app doesn't count.
 
 Window screenshots cover the window's whole surface. The only position the API reports is
 the bounds of the window's touchable region. `WindowPlacement` lines the two up: exact bounds
@@ -176,16 +188,17 @@ same code over a `PixelCopy` snapshot of its own window.
   While the secure app is up, PaperScreen checks about twice a second, and on every window
   change, whether any window is still secure. The window that was secure is tried first,
   and for it the answer comes back at once. Nothing is composited or shown. Once no window
-  is secure (you switched to another app, or went home), the overlay comes back by itself on
-  a blank page. The first capture waits 500 ms, so the secure app's closing animation isn't
-  caught in it, and it's a plain refresh, without the full-refresh flash. To turn filtering
+  is secure (you switched to another app, or went home), the overlay comes back by itself
+  with its first capture. That capture waits 500 ms, so the secure app's closing animation
+  isn't caught in it, and it's a plain refresh, without the full-refresh flash. Until then
+  the screen shows as it is. To turn filtering
   off for other reasons, there's still **Pause 5 min** in the notification.
   Resuming doesn't rely on the `ACTION_USER_PRESENT` broadcast alone: display-state changes
   and the accessibility events that follow an unlock also check "screen on, unlocked, should
   be filtering" and bring the overlay back.
-- **Rotation / resolution change:** a `DisplayListener` resizes the overlay, shows a blank
-  page in place of the stale frame, and does a full refresh once the rotation animation is
-  done.
+- **Rotation / resolution change:** a `DisplayListener` notices, the stale frame is dropped
+  and the overlay steps aside, and it comes back with a full refresh once the rotation
+  animation is done.
 
 ## Home screen (optional launcher)
 

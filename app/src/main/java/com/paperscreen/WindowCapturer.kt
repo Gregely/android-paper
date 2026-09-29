@@ -10,6 +10,7 @@ import android.graphics.Rect
 import android.hardware.HardwareBuffer
 import android.os.Handler
 import android.os.SystemClock
+import android.util.Log
 import java.util.concurrent.Executor
 
 /**
@@ -134,6 +135,7 @@ class WindowCapturer(
     private fun start(job: Job) {
         activeSeq = job.seq
         if (job.targets.isEmpty()) {
+            Log.w(TAG, "capture skipped: no windows reported")
             main.post { listener.onCaptureFailed(job.seq) }
             return
         }
@@ -268,6 +270,7 @@ class WindowCapturer(
             job.release()
             process(composite, seq)
         } catch (e: RuntimeException) {
+            Log.w(TAG, "capture failed while compositing", e)
             job.release()
             main.post { listener.onCaptureFailed(seq) }
         }
@@ -281,13 +284,27 @@ class WindowCapturer(
         composite.getPixels(pixels, 0, width, 0, 0, width, height)
         composite.recycle()
 
-        filterParams?.let(filter::setParams)
+        val params = filterParams
+        if (params == null) {
+            Log.w(TAG, "capture skipped: no filter settings yet")
+            main.post { listener.onCaptureFailed(seq) }
+            return
+        }
+        filter.setParams(params)
         filter.applyToArgb(pixels, count)
+        // A single flat colour means the capture didn't really work; showing it would cover
+        // the screen with a solid page. Skip it (the frame on screen stays) and try again.
+        if (FrameCheck.isUniform(pixels, count)) {
+            Log.w(TAG, "capture skipped: the frame came out a single colour (#%06X)".format(pixels[0] and 0xFFFFFF))
+            main.post { listener.onCaptureFailed(seq) }
+            return
+        }
         val update = frameDiff.diff(pixels, width, height)?.let { Update(epoch, width, height, it) }
         main.post { listener.onFrameProcessed(seq, update) }
     }
 
     private companion object {
+        const val TAG = "PaperScreen"
         const val NONE = -1
 
         /** The system's limit is 333 ms per window; a little slack avoids rejected requests. */

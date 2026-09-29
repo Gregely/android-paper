@@ -79,6 +79,7 @@
     <string name="service_dialog_restricted">\n\nIf the switch is greyed out as a \"restricted setting\", open App info for PaperScreen, tap ⋮ in the top corner, choose \"Allow restricted settings\", and try again.</string>
     <string name="open_settings">Open settings</string>
     <string name="not_now">Not now</string>
+    <string name="start_timeout">PaperScreen couldn\'t start — try again</string>
     <string name="start_failed">Couldn\'t start PaperScreen. Make sure its accessibility service is on, then try again.</string>
 
     <string name="reset_to_default">Reset %1$s to default</string>

@@ -26,6 +26,7 @@ import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.Toast
 import java.util.Date
 import kotlin.math.max
 import kotlin.math.min
@@ -124,6 +125,13 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
 
     /** Paused while a secure app was up: on resuming, check for it before showing the overlay. */
     private var pausedInSecure = false
+
+    /**
+     * Filtering was just turned on and nothing has been shown yet. If no valid frame arrives
+     * within [STARTUP_TIMEOUT_MS] of the overlay being due, filtering turns itself off again.
+     */
+    private var awaitingFirstFrame = false
+    private val startupTimeout = Runnable { onStartupTimeout() }
 
     /** The filter settings last handed to the capturer (warmth changes with Night warmth). */
     private var appliedParams: EinkFilter.Params? = null
@@ -225,6 +233,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         phase = Phase.PAUSED
         pausedInSecure = false
         quietFirstFrame = false
+        awaitingFirstFrame = true
         restoreSnooze()
         if (isScreenUsable() && !resume()) {
             stopCapture()
@@ -246,6 +255,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         cancelProbe()
         clearSnooze()
         main.removeCallbacks(warmthTick)
+        main.removeCallbacks(startupTimeout)
+        awaitingFirstFrame = false
         appliedParams = null
         settings.prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         displayManager.unregisterDisplayListener(displayListener)
@@ -321,11 +332,14 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
             if (applied != null) overlay?.view?.frameChanged()
             return
         }
-        val view = overlay?.view
-        if (view == null || applied == null) {
+        val window = overlay
+        if (window == null || applied == null) {
             finishRefresh(changed = false)
             return
         }
+        // The first valid frame: only now does the overlay appear, already showing it.
+        if (!window.isAttached && !revealOverlay(window)) return
+        val view = window.view
         if (applied != null) quietFirstFrame = false
         // With full refreshes off, even the first frame just replaces the blank page.
         val full = fullDue || (fullRefresh && applied.firstFrame && !quiet)
@@ -412,7 +426,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         when (phase) {
             Phase.CAPTURING -> {
                 finishRefresh(changed = false)
-                if (frameBitmap == null) requestRefresh() // Still on the blank page; keep trying.
+                // No frame to show yet (the overlay is still hidden): keep trying.
+                if (frameBitmap == null) requestRefresh()
             }
             Phase.SECURE -> {
                 probing = false
@@ -454,6 +469,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     private fun enterSecure() {
         clearFrame()
         phase = Phase.SECURE
+        main.removeCallbacks(startupTimeout) // A secure app isn't a failure to start.
         hideOverlay()
         val notice = secureNotice ?: SecureNotice(this).also { secureNotice = it }
         notice.show(settings.effectiveWarmth(), settings.homeFont.typeface(), SECURE_NOTICE_MS)
@@ -462,8 +478,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
     }
 
     /**
-     * The secure app has gone (another app, or home). The overlay comes back on a blank page,
-     * and the first capture waits a moment so the secure app's closing animation isn't in it.
+     * The secure app has gone (another app, or home). The overlay comes back with the first
+     * capture, which waits a moment so the secure app's closing animation isn't in it.
      */
     private fun exitSecure() {
         cancelProbe()
@@ -475,6 +491,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         secureNotice?.hide()
         phase = Phase.IDLE
         quietFirstFrame = true
+        armStartupTimeout()
         requestRefresh(SECURE_COOLDOWN_MS)
         Log.i(TAG, "secure app gone: overlay back")
     }
@@ -504,7 +521,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
 
     /**
      * Drops the frame on screen (it no longer matches anything) and abandons any refresh in
-     * flight. The overlay shows a blank page until the next frame, which is a full refresh.
+     * flight. The overlay steps aside (rather than show a blank page) until the next valid
+     * frame, which is a full refresh.
      */
     private fun clearFrame() {
         seq++
@@ -513,6 +531,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         capturer?.reset(frameEpoch)
         frameBitmap = null
         overlay?.view?.setFrame(null)
+        overlay?.detach()
     }
 
     // --- Pause / resume / snooze / geometry ------------------------------------------------
@@ -527,6 +546,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         if (phase == Phase.PAUSED) return
         pausedInSecure = phase == Phase.SECURE
         phase = Phase.PAUSED
+        main.removeCallbacks(startupTimeout) // Re-armed when the overlay is due again.
         cancelProbe()
         secureNotice?.hide()
         pausedForScreenOff = keepFrame
@@ -560,8 +580,9 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         // captures (in case the screen-on/unlock broadcasts were late or missed).
         if (pausedForScreenOff) startGrace()
         pausedForScreenOff = false
-        // The kept frame (or a blank page) shows until the first capture; let unlock
-        // animations finish first.
+        // The kept frame (if any) shows until the first capture; without one the overlay
+        // stays hidden until then. Let unlock animations finish first.
+        armStartupTimeout()
         requestRefresh(RESUME_DELAY_MS)
         Log.i(TAG, "resumed")
         return true
@@ -580,20 +601,66 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         }
     }
 
+    /**
+     * Prepares a fresh overlay. With a frame to show (one kept while the screen was off) it
+     * goes up straight away; otherwise it waits, detached, for the first valid capture
+     * ([revealOverlay]), so a capture that never succeeds can't leave a blank page up.
+     */
     private fun showOverlay(): Boolean {
         hideOverlay()
         val window = OverlayWindow(this)
+        window.view.blankColor = EinkFilter.paperColor(settings.filterParams())
+        window.view.setFrame(frameBitmap)
+        if (frameBitmap != null) {
+            try {
+                window.attach(geometry)
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "couldn't add the overlay", e)
+                return false
+            }
+        }
+        overlay = window
+        applyGhostStyle()
+        return true
+    }
+
+    /** Puts the overlay up once a valid frame is in it. False if it couldn't be added. */
+    private fun revealOverlay(window: OverlayWindow): Boolean {
         try {
             window.attach(geometry)
         } catch (e: RuntimeException) {
             Log.w(TAG, "couldn't add the overlay", e)
+            failToStart()
             return false
         }
-        window.view.blankColor = EinkFilter.paperColor(settings.filterParams())
-        window.view.setFrame(frameBitmap)
-        overlay = window
-        applyGhostStyle()
+        if (awaitingFirstFrame) {
+            awaitingFirstFrame = false
+            main.removeCallbacks(startupTimeout)
+            Log.i(TAG, "first frame shown")
+        }
         return true
+    }
+
+    /** While filtering is just starting: give up if no valid frame arrives in time. */
+    private fun armStartupTimeout() {
+        main.removeCallbacks(startupTimeout)
+        if (awaitingFirstFrame) main.postDelayed(startupTimeout, STARTUP_TIMEOUT_MS)
+    }
+
+    private fun onStartupTimeout() {
+        if (!capturing || !awaitingFirstFrame) return
+        Log.w(TAG, "no valid frame within ${STARTUP_TIMEOUT_MS / 1000} s of turning on; stopping")
+        failToStart()
+    }
+
+    /**
+     * Turns filtering off (it stays off until the user turns it on again) and says so. The
+     * overlay was never shown, so the toast is on the real screen.
+     */
+    private fun failToStart() {
+        settings.captureEnabled = false
+        stopCapture()
+        Toast.makeText(this, R.string.start_timeout, Toast.LENGTH_LONG).show()
     }
 
     /**
@@ -831,6 +898,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         private const val MAX_BACKOFF_MS = 1_000L
         private const val SNOOZE_MS = 5 * 60 * 1_000L
         private const val SECURE_NOTICE_MS = 2_000L
+        private const val STARTUP_TIMEOUT_MS = 5_000L
         /** After a secure app: how long the overlay waits before its first capture. */
         private const val SECURE_COOLDOWN_MS = 500L
         /** While a secure app is up: how often to check whether it's still there. */

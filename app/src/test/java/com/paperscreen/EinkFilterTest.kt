@@ -31,6 +31,14 @@ class EinkFilterTest {
     }
 
     @Test
+    fun posterizationOffIsSmooth() {
+        // 256 levels (posterization off) keeps every distinct grey the ink..paper range holds.
+        val distinct = lut(levels = PaperSettings.SMOOTH_LEVELS).map { green(it) }.toSet()
+        val range = EinkFilter.paperLevel(50) - EinkFilter.inkLevel(50)
+        assertTrue("got ${distinct.size} greys", distinct.size >= range * 9 / 10)
+    }
+
+    @Test
     fun outputIsOpaqueAndMonotonic() {
         val table = lut(warmth = 20)
         for (i in 1..255) {

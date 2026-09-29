@@ -43,15 +43,18 @@ Each refresh (`PaperScreenAccessibilityService.beginRefresh`):
    the rows that changed, as bands from the leftmost to the rightmost changed pixel.
 3. **Update**, as one of two kinds of refresh:
    - **Partial refresh** (usual): the changed bands are written into the frame on screen in
-     place, and pixels that didn't change are never touched. What the changed regions showed
-     before lingers faintly (30%) and fades out over ~300 ms. That's the ghost trail a real
-     e-ink partial refresh leaves, and it makes the refreshed area visible. Rewriting only
-     the changed pixels would otherwise look identical to replacing the whole frame, since
-     the unchanged pixels keep the same values either way.
-   - **Full refresh** (every *N* partial refreshes; 10–100, default 50): the new frame is
-     shown with inverted colours for ~80 ms, then normally. This mimics e-ink's
-     ghosting-clear cycle. The first frame after starting, unlocking or rotating is always a
-     full refresh; until it arrives, the overlay shows a blank page in the paper colour.
+     place, and pixels that didn't change are never touched. With **Ghosting** on, what the
+     changed regions showed before lingers faintly and fades out (opacity 5–60%, default 30%;
+     fade 100–1000 ms, default 300 ms). That's the trail a real e-ink partial refresh
+     leaves, and it makes the refreshed area visible. Without it, rewriting only the changed
+     pixels looks identical to replacing the whole frame, since the unchanged pixels keep
+     their values either way.
+   - **Full refresh** (when on; every *N* partial refreshes, 10–100, default 50): the new
+     frame is shown with inverted colours for the flash duration (150–600 ms, default
+     350 ms), then normally. This mimics an e-ink page turn clearing its ghosts. The first
+     frame after starting, unlocking or rotating is a full refresh too. Until it arrives,
+     the overlay shows a blank page in the paper colour. With full refresh off, every refresh
+     is partial, and the first frame simply replaces the blank page.
 
 Window screenshots cover the window's whole surface. The only position the API reports is
 the bounds of the window's touchable region. `WindowPlacement` lines the two up: exact bounds
@@ -61,11 +64,16 @@ keyboard, navigation bar) to their edge, and everything else centred (dialog sha
 **The 333 ms limit.** The system refuses a second screenshot of the same window within
 333 ms. Different windows can be captured back to back, so windows are captured one at a
 time and each waits out its own interval. In practice the fastest refresh is about every
-340 ms, so the Realtime, Fast and Responsive presets currently all refresh at that rate.
+340 ms.
 
-**Refresh interval presets.** Realtime (0 ms), Fast (100), Responsive (250, the default),
-Reading (500), Slow (1000), E-ink (1500), or Custom (0–1500 ms, in 50 ms steps). The interval
-is the minimum time between refreshes.
+**Refresh speed presets.** Standard (340 ms, the fastest Android allows, and the default),
+Reading (500), Slow (1000), E-ink (1500), or Custom (340–2000 ms, in 20 ms steps). The
+interval is the minimum time between refreshes. The choice is remembered.
+
+**Settings layout.** Refresh speed, warmth and contrast are always shown. Posterization,
+Ghosting, Full refresh and Refresh on change each have a switch (all on by default), and
+their sub-settings are only shown while the switch is on. Refresh on change has no
+sub-settings, so its switch stands alone. The secure-app message is always on.
 
 **Refresh on change.** With **Refresh only when the screen changes** on (the default),
 refreshes are triggered by accessibility events that usually mean something visible changed:
@@ -81,7 +89,7 @@ and each pixel costs one table lookup:
 | Step | Detail |
 |---|---|
 | Desaturate | Rec. 709 luma, fixed point |
-| Posterize | 4–32 evenly spaced levels (default 16) |
+| Posterize | 4–32 evenly spaced levels (default 16). With Posterization off, every grey is kept (smooth greyscale). |
 | Contrast | Remaps 0/255 to ink/paper. Contrast 0 → 60/195, **50 (default) → 30/225**, 100 → 0/255 |
 | Warmth | Per-channel tint from cool blue-grey (0) to sepia/amber (100). Default 20 |
 

@@ -85,6 +85,10 @@ class OverlayWindow(service: AccessibilityService) {
         private var ghostStart = 0L
         private val ghostPaint = Paint().apply { isFilterBitmap = false }
 
+        /** Starting opacity (0–1) and fade time of partial-refresh ghosts. */
+        var ghostAlpha = PaperSettings.DEFAULT_GHOST_OPACITY / 100f
+        var ghostFadeMs = PaperSettings.DEFAULT_GHOST_FADE_MS.toLong()
+
         private var frame: Bitmap? = null
         private var inverted = false
         private val location = IntArray(2)
@@ -174,14 +178,14 @@ class OverlayWindow(service: AccessibilityService) {
 
         private fun drawGhosts(canvas: Canvas) {
             if (ghosts.isEmpty()) return
-            val t = (SystemClock.uptimeMillis() - ghostStart) / GHOST_MS.toFloat()
+            val t = (SystemClock.uptimeMillis() - ghostStart) / ghostFadeMs.toFloat()
             if (t >= 1f) {
                 ghosts = emptyList()
                 return
             }
             // Ease out: most of the trail is gone within the first ~100 ms.
             val remaining = (1f - t) * (1f - t)
-            ghostPaint.alpha = (GHOST_ALPHA * remaining * 255).toInt()
+            ghostPaint.alpha = (ghostAlpha * remaining * 255).toInt()
             for (ghost in ghosts) {
                 canvas.drawBitmap(
                     ghost.bitmap,
@@ -208,13 +212,6 @@ class OverlayWindow(service: AccessibilityService) {
     }
 
     companion object {
-        /** How long a full refresh shows the inverted frame. */
-        const val INVERT_MS = 80L
-
-        /** Partial-refresh ghosting: starting opacity of the old content, and fade time. */
-        private const val GHOST_ALPHA = 0.3f
-        private const val GHOST_MS = 300L
-
         /** Swaps light and dark, keeping alpha. */
         val INVERT = ColorMatrix(
             floatArrayOf(

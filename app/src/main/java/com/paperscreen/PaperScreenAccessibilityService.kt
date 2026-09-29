@@ -43,7 +43,8 @@ import kotlin.math.min
  *   captured and filtered in the background; then only the pixels that changed are written
  *   into it. No flash; static areas never change.
  * - **Full refresh** (every N partial refreshes, and for the first frame): the new frame is
- *   shown with inverted colours for ~80 ms, then normally — e-ink's ghosting-clear cycle.
+ *   shown with inverted colours for the flash duration (~350 ms), then normally — e-ink's
+ *   ghosting-clear cycle. Can be turned off, making every refresh partial.
  *
  * Refreshes happen every interval, or — with "refresh on change" — when accessibility events
  * report that something on screen changed, at most once per interval. Capture pauses while
@@ -99,7 +100,10 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
 
     private var intervalMs = RefreshPreset.DEFAULT.ms ?: 0
     private var refreshOnChange = true
+    private var fullRefresh = true
     private var fullRefreshEvery = PaperSettings.DEFAULT_FULL_REFRESH_EVERY
+    private var flashMs = PaperSettings.DEFAULT_FLASH_MS.toLong()
+    private var ghosting = true
     private var scheduledAt = NOT_SCHEDULED
     private val refreshRunnable = Runnable {
         scheduledAt = NOT_SCHEDULED
@@ -162,7 +166,7 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         workerThread = thread
         intervalMs = settings.refreshIntervalMs
         refreshOnChange = settings.refreshOnChange
-        fullRefreshEvery = settings.fullRefreshEvery
+        readRefreshStyle()
         backoffMs = 0L
         capturer = WindowCapturer(this, Handler(thread.looper), main, this).apply {
             filterParams = settings.filterParams()
@@ -269,9 +273,10 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
             frameBitmap = bitmap
             view.setFrame(bitmap)
         }
-        val full = firstFrame || partialsSinceFull >= fullRefreshEvery
+        // With full refreshes off, even the first frame just replaces the blank page.
+        val full = fullRefresh && (firstFrame || partialsSinceFull >= fullRefreshEvery)
         // Keep what the changed regions showed before, for the partial-refresh ghost trail.
-        val ghosts = if (full) emptyList() else update.bands.map { band ->
+        val ghosts = if (full || firstFrame || !ghosting) emptyList() else update.bands.map { band ->
             OverlayWindow.FrameView.Ghost(
                 Bitmap.createBitmap(bitmap, band.left, band.top, band.width, band.height),
                 band.left,
@@ -289,9 +294,9 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
                 if (seq != this.seq || phase != Phase.CAPTURING) return@postDelayed
                 view.setInverted(false)
                 finishRefresh(changed = true)
-            }, OverlayWindow.INVERT_MS)
+            }, flashMs)
         } else {
-            // Partial refresh: only the changed pixels were written, and they ghost briefly.
+            // Partial refresh: only the changed pixels were written (ghosting, if on).
             partialsSinceFull++
             view.frameChanged(ghosts)
             finishRefresh(changed = true)
@@ -404,7 +409,22 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
         }
         window.view.blankColor = EinkFilter.paperColor(settings.filterParams())
         overlay = window
+        applyGhostStyle()
         return true
+    }
+
+    private fun readRefreshStyle() {
+        fullRefresh = settings.fullRefresh
+        fullRefreshEvery = settings.fullRefreshEvery
+        flashMs = settings.flashDurationMs.toLong()
+        ghosting = settings.ghosting
+        applyGhostStyle()
+    }
+
+    private fun applyGhostStyle() {
+        val view = overlay?.view ?: return
+        view.ghostAlpha = settings.ghostOpacity / 100f
+        view.ghostFadeMs = settings.ghostFadeMs.toLong()
     }
 
     private fun hideOverlay() {
@@ -484,7 +504,8 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
                     requestRefresh()
                 }
             }
-            PaperSettings.KEY_WARMTH, PaperSettings.KEY_CONTRAST, PaperSettings.KEY_LEVELS -> {
+            PaperSettings.KEY_WARMTH, PaperSettings.KEY_CONTRAST, PaperSettings.KEY_LEVELS,
+            PaperSettings.KEY_POSTERIZE -> {
                 val params = settings.filterParams()
                 capturer?.filterParams = params
                 overlay?.view?.blankColor = EinkFilter.paperColor(params)
@@ -494,7 +515,9 @@ class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.L
                 refreshOnChange = settings.refreshOnChange
                 requestRefresh()
             }
-            PaperSettings.KEY_FULL_REFRESH_EVERY -> fullRefreshEvery = settings.fullRefreshEvery
+            PaperSettings.KEY_FULL_REFRESH, PaperSettings.KEY_FULL_REFRESH_EVERY, PaperSettings.KEY_FLASH_DURATION,
+            PaperSettings.KEY_GHOSTING, PaperSettings.KEY_GHOST_OPACITY, PaperSettings.KEY_GHOST_FADE,
+            -> readRefreshStyle()
         }
     }
 

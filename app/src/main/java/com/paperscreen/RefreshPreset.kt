@@ -2,9 +2,8 @@ package com.paperscreen
 
 /** Named refresh intervals. [CUSTOM] uses the user's own value instead of [ms]. */
 enum class RefreshPreset(val ms: Int?, val label: Int) {
-    REALTIME(0, R.string.preset_realtime),
-    FAST(100, R.string.preset_fast),
-    RESPONSIVE(250, R.string.preset_responsive),
+    /** The fastest Android allows: each window can be captured about three times a second. */
+    STANDARD(340, R.string.preset_standard),
     READING(500, R.string.preset_reading),
     SLOW(1000, R.string.preset_slow),
     EINK(1500, R.string.preset_eink),
@@ -12,6 +11,6 @@ enum class RefreshPreset(val ms: Int?, val label: Int) {
     ;
 
     companion object {
-        val DEFAULT = RESPONSIVE
+        val DEFAULT = STANDARD
     }
 }

@@ -79,18 +79,13 @@
                 android:text="@string/status_stopped" />
         </LinearLayout>
 
-        <!-- Filter & timing -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:background="@drawable/card_background"
-            android:orientation="vertical"
-            android:paddingStart="20dp"
-            android:paddingTop="20dp"
-            android:paddingEnd="20dp"
-            android:paddingBottom="4dp">
+            style="@style/Card"
+            android:animateLayoutChanges="true">
 
+            <TextView
+                style="@style/CardTitle"
+                android:text="@string/section_speed" />
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -116,11 +111,7 @@
             <!-- Shown only for the Custom preset. -->
             <LinearLayout
                 android:id="@+id/custom_interval"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="vertical"
-                android:visibility="gone">
+                style="@style/FeatureOptions">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -139,16 +130,24 @@
 
                 <SeekBar
                     android:id="@+id/custom_interval_seek"
-                    style="@style/Slider"
-                    android:layout_marginBottom="4dp" />
+                    style="@style/Slider" />
+
             </LinearLayout>
 
             <TextView
                 style="@style/Hint"
                 android:layout_marginTop="4dp"
-                android:layout_marginBottom="20dp"
+                android:layout_marginBottom="16dp"
                 android:text="@string/interval_hint" />
+        </LinearLayout>
 
+        <LinearLayout
+            style="@style/Card"
+            android:animateLayoutChanges="true">
+
+            <TextView
+                style="@style/CardTitle"
+                android:text="@string/section_look" />
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -191,59 +190,165 @@
                 android:id="@+id/contrast_seek"
                 style="@style/Slider" />
 
+            <Switch
+                android:id="@+id/posterize_switch"
+                style="@style/FeatureSwitch"
+                android:text="@string/posterize" />
+
+            <TextView
+                style="@style/Hint"
+                android:text="@string/posterize_hint" />
+
+            <!-- Sub-settings: shown only while the switch above is on. -->
             <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:id="@+id/posterize_options"
+                style="@style/FeatureOptions">
 
-                <TextView
-                    style="@style/SectionLabel"
-                    android:labelFor="@id/levels_seek"
-                    android:text="@string/grey_levels" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
 
-                <TextView
-                    android:id="@+id/levels_value"
-                    style="@style/SectionValue" />
+                    <TextView
+                        style="@style/SectionLabel"
+                        android:labelFor="@id/levels_seek"
+                        android:text="@string/grey_levels" />
+
+                    <TextView
+                        android:id="@+id/levels_value"
+                        style="@style/SectionValue" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/levels_seek"
+                    style="@style/Slider" />
+
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            style="@style/Card"
+            android:animateLayoutChanges="true">
+
+            <TextView
+                style="@style/CardTitle"
+                android:text="@string/section_style" />
+
+            <Switch
+                android:id="@+id/ghosting_switch"
+                style="@style/FeatureSwitch"
+                android:text="@string/ghosting" />
+
+            <TextView
+                style="@style/Hint"
+                android:text="@string/ghosting_hint" />
+
+            <!-- Sub-settings: shown only while the switch above is on. -->
+            <LinearLayout
+                android:id="@+id/ghosting_options"
+                style="@style/FeatureOptions">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/SectionLabel"
+                        android:labelFor="@id/ghost_opacity_seek"
+                        android:text="@string/ghost_opacity" />
+
+                    <TextView
+                        android:id="@+id/ghost_opacity_value"
+                        style="@style/SectionValue" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/ghost_opacity_seek"
+                    style="@style/Slider" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/SectionLabel"
+                        android:labelFor="@id/ghost_fade_seek"
+                        android:text="@string/ghost_fade" />
+
+                    <TextView
+                        android:id="@+id/ghost_fade_value"
+                        style="@style/SectionValue" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/ghost_fade_seek"
+                    style="@style/Slider" />
+
             </LinearLayout>
 
-            <SeekBar
-                android:id="@+id/levels_seek"
-                style="@style/Slider" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <TextView
-                    style="@style/SectionLabel"
-                    android:labelFor="@id/full_refresh_seek"
-                    android:text="@string/full_refresh_every" />
-
-                <TextView
-                    android:id="@+id/full_refresh_value"
-                    style="@style/SectionValue" />
-            </LinearLayout>
+            <Switch
+                android:id="@+id/full_refresh_switch"
+                style="@style/FeatureSwitch"
+                android:text="@string/full_refresh" />
 
             <TextView
                 style="@style/Hint"
                 android:text="@string/full_refresh_hint" />
 
-            <SeekBar
-                android:id="@+id/full_refresh_seek"
-                style="@style/Slider" />
+            <!-- Sub-settings: shown only while the switch above is on. -->
+            <LinearLayout
+                android:id="@+id/full_refresh_options"
+                style="@style/FeatureOptions">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/SectionLabel"
+                        android:labelFor="@id/full_refresh_seek"
+                        android:text="@string/full_refresh_every" />
+
+                    <TextView
+                        android:id="@+id/full_refresh_value"
+                        style="@style/SectionValue" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/full_refresh_seek"
+                    style="@style/Slider" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/SectionLabel"
+                        android:labelFor="@id/flash_duration_seek"
+                        android:text="@string/flash_duration" />
+
+                    <TextView
+                        android:id="@+id/flash_duration_value"
+                        style="@style/SectionValue" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/flash_duration_seek"
+                    style="@style/Slider" />
+
+            </LinearLayout>
 
             <Switch
                 android:id="@+id/on_change_switch"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/refresh_on_change"
-                android:textColor="@color/ink"
-                android:textSize="16sp" />
+                style="@style/FeatureSwitch"
+                android:text="@string/refresh_on_change" />
 
             <TextView
                 style="@style/Hint"
-                android:layout_marginTop="4dp"
                 android:layout_marginBottom="16dp"
                 android:text="@string/refresh_on_change_hint" />
         </LinearLayout>

@@ -66,7 +66,7 @@ class SettingsActivity : Activity() {
 
         setUpIntervalPresets()
         setUpSliders()
-        setUpOnChangeSwitch()
+        setUpFeatureToggles()
         setUpPreviewButton()
 
         if (!isServiceEnabled() && !settings.servicePromptShown) {
@@ -235,6 +235,7 @@ class SettingsActivity : Activity() {
         val step = PaperSettings.CUSTOM_INTERVAL_STEP_MS
         bindSlider(
             R.id.custom_interval_seek,
+            min = PaperSettings.MIN_CUSTOM_INTERVAL_MS / step,
             max = PaperSettings.MAX_CUSTOM_INTERVAL_MS / step,
             initial = settings.customIntervalMs / step,
             save = {
@@ -290,6 +291,56 @@ class SettingsActivity : Activity() {
             save = { settings.fullRefreshEvery = it },
             render = { fullRefreshValue.text = resources.getQuantityString(R.plurals.full_refresh_every_value, it, it) },
         )
+        val flashStep = PaperSettings.FLASH_STEP_MS
+        bindSlider(
+            R.id.flash_duration_seek,
+            min = PaperSettings.MIN_FLASH_MS / flashStep,
+            max = PaperSettings.MAX_FLASH_MS / flashStep,
+            initial = settings.flashDurationMs / flashStep,
+            save = { settings.flashDurationMs = it * flashStep },
+            render = { valueText(R.id.flash_duration_value).text = getString(R.string.flash_duration_value, it * flashStep) },
+        )
+        bindSlider(
+            R.id.ghost_opacity_seek,
+            min = PaperSettings.MIN_GHOST_OPACITY,
+            max = PaperSettings.MAX_GHOST_OPACITY,
+            initial = settings.ghostOpacity,
+            save = { settings.ghostOpacity = it },
+            render = { valueText(R.id.ghost_opacity_value).text = getString(R.string.ghost_opacity_value, it) },
+        )
+        val fadeStep = PaperSettings.GHOST_FADE_STEP_MS
+        bindSlider(
+            R.id.ghost_fade_seek,
+            min = PaperSettings.MIN_GHOST_FADE_MS / fadeStep,
+            max = PaperSettings.MAX_GHOST_FADE_MS / fadeStep,
+            initial = settings.ghostFadeMs / fadeStep,
+            save = { settings.ghostFadeMs = it * fadeStep },
+            render = { valueText(R.id.ghost_fade_value).text = getString(R.string.ghost_fade_value, it * fadeStep) },
+        )
+    }
+
+    private fun valueText(id: Int): TextView = findViewById(id)
+
+    /** Optional features: each switch shows its sub-settings only while it's on. */
+    private fun setUpFeatureToggles() {
+        bindFeature(R.id.posterize_switch, R.id.posterize_options, settings.posterize) { settings.posterize = it }
+        bindFeature(R.id.ghosting_switch, R.id.ghosting_options, settings.ghosting) { settings.ghosting = it }
+        bindFeature(R.id.full_refresh_switch, R.id.full_refresh_options, settings.fullRefresh) {
+            settings.fullRefresh = it
+        }
+        // Refresh on change has no sub-settings; its description stays visible either way.
+        bindFeature(R.id.on_change_switch, null, settings.refreshOnChange) { settings.refreshOnChange = it }
+    }
+
+    private fun bindFeature(switchId: Int, optionsId: Int?, initial: Boolean, save: (Boolean) -> Unit) {
+        val toggle = findViewById<Switch>(switchId)
+        val options = optionsId?.let { findViewById<View>(it) }
+        toggle.isChecked = initial
+        options?.visibility = if (initial) View.VISIBLE else View.GONE
+        toggle.setOnCheckedChangeListener { _, checked ->
+            save(checked)
+            options?.visibility = if (checked) View.VISIBLE else View.GONE
+        }
     }
 
     private fun bindSlider(
@@ -316,12 +367,6 @@ class SettingsActivity : Activity() {
         })
     }
 
-    private fun setUpOnChangeSwitch() {
-        val toggle = findViewById<Switch>(R.id.on_change_switch)
-        toggle.isChecked = settings.refreshOnChange
-        toggle.setOnCheckedChangeListener { _, checked -> settings.refreshOnChange = checked }
-    }
-
     @SuppressLint("ClickableViewAccessibility") // The button still performs its own click.
     private fun setUpPreviewButton() {
         findViewById<Button>(R.id.preview_button).setOnTouchListener { view, event ->
@@ -329,7 +374,8 @@ class SettingsActivity : Activity() {
                 MotionEvent.ACTION_DOWN -> {
                     // Keep the ScrollView from stealing the gesture while the finger is held.
                     view.parent.requestDisallowInterceptTouchEvent(true)
-                    preview.begin(settings.filterParams())
+                    val invertMs = if (settings.fullRefresh) settings.flashDurationMs.toLong() else 0L
+                    preview.begin(settings.filterParams(), invertMs)
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> preview.end()
             }

@@ -15,7 +15,7 @@ import android.widget.ImageView
 /**
  * "Hold to preview": snapshots the activity's own window, runs it through the same
  * [EinkFilter] the service uses, and lays the result over the window (with the full-refresh
- * inversion) until [end] is called.
+ * inversion, if full refreshes are on) until [end] is called.
  */
 class FilterPreview(private val activity: Activity) {
 
@@ -28,7 +28,8 @@ class FilterPreview(private val activity: Activity) {
     /** Incremented on every begin/end so late callbacks from an old preview are ignored. */
     private var token = 0
 
-    fun begin(params: EinkFilter.Params) {
+    /** [invertMs] is the full-refresh flash duration, or 0 when full refreshes are off. */
+    fun begin(params: EinkFilter.Params, invertMs: Long) {
         if (cover != null) return
         val decor = activity.window.decorView as ViewGroup
         val width = decor.width
@@ -43,7 +44,7 @@ class FilterPreview(private val activity: Activity) {
             filter.setParams(params)
             filter.applyToArgb(pixels, pixels.size)
             snapshot.setPixels(pixels, 0, width, 0, 0, width, height)
-            main.post { if (current == token) showFiltered(snapshot, current) }
+            main.post { if (current == token) showFiltered(snapshot, current, invertMs) }
         }, worker)
     }
 
@@ -59,22 +60,24 @@ class FilterPreview(private val activity: Activity) {
     }
 
     /** Shows the filtered snapshot the way a full refresh does: inverted briefly, then normal. */
-    private fun showFiltered(bitmap: Bitmap, current: Int) {
+    private fun showFiltered(bitmap: Bitmap, current: Int, invertMs: Long) {
         if (cover != null) return
         val view = ImageView(activity).apply {
             scaleType = ImageView.ScaleType.FIT_XY
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             translationZ = 1000f
             setImageBitmap(bitmap)
-            colorFilter = ColorMatrixColorFilter(OverlayWindow.INVERT)
+            if (invertMs > 0) colorFilter = ColorMatrixColorFilter(OverlayWindow.INVERT)
         }
         (activity.window.decorView as ViewGroup).addView(
             view,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
         )
         cover = view
-        main.postDelayed({
-            if (current == token) view.colorFilter = null
-        }, OverlayWindow.INVERT_MS)
+        if (invertMs > 0) {
+            main.postDelayed({
+                if (current == token) view.colorFilter = null
+            }, invertMs)
+        }
     }
 }

@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One app in the home screen list or the favourites picker: just its name. -->
+<!--
+  One app in the drawer: just its name. The 16dp start padding is a gutter for the dot that
+  marks a favourite (drawn in code), so every name still lines up with the search field.
+-->
 <TextView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     style="@style/HomeText"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:paddingStart="16dp"
     android:background="?android:attr/selectableItemBackground"
     android:ellipsize="end"
     android:minHeight="48dp"
@@ -13,4 +17,4 @@
     android:paddingBottom="10dp"
     android:singleLine="true"
     android:textSize="19sp"
-    tools:ignore="Overdraw" />
+    tools:ignore="Overdraw,RtlSymmetry" />

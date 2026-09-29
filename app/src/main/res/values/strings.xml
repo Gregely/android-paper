@@ -106,7 +106,7 @@
 
     <string name="section_home">Home screen</string>
     <string name="home_screen">Use as home screen</string>
-    <string name="home_screen_hint">A page-style home screen: clock, date, favourites and an app drawer, all as text. On the home screen, long-press a favourite and drag to reorder it, or release to change it. Turning this off opens the system\'s default home app setting.</string>
+    <string name="home_screen_hint">A page-style home screen: clock, date, up to ten favourites and an app drawer, all as text. Long-press an app in the drawer to add it to your favourites. On the home screen, long-press a favourite and drag to reorder it, or release for more options. Turning this off opens the system\'s default home app setting.</string>
     <string name="home_label">PaperScreen Home</string>
     <string name="clock_24h">24-hour clock</string>
     <string name="clock_24h_hint">Follows your phone\'s setting until you change it here.</string>
@@ -121,11 +121,15 @@
     <string name="font_sans">Sans-serif</string>
     <string name="font_mono">Monospace</string>
     <string name="home_search_hint">Search apps</string>
-    <string name="home_add_favourite">+ Add app</string>
     <string name="home_index_description">Alphabet index. Tap a letter to jump to it.</string>
-    <string name="home_pick_favourite">Replace favourite</string>
-    <string name="home_add_favourite_title">Add a favourite</string>
-    <string name="home_remove_favourite">Remove</string>
+    <string name="home_favourites_empty">No favourites yet.\nLong-press an app in the list to add one.</string>
+    <string name="home_favourite_description">%1$s, favourite</string>
+    <string name="menu_add_favourite">Add to favourites</string>
+    <string name="menu_remove_favourite">Remove from favourites</string>
+    <string name="menu_app_info">App info</string>
+    <string name="menu_move_top">Move to top</string>
+    <string name="menu_move_bottom">Move to bottom</string>
+    <string name="home_app_info_failed">Couldn\'t open app info for %1$s</string>
     <string name="home_launch_failed">Couldn\'t open %1$s</string>
 
     <string name="secure_app_message">Secure app — Tap here to pause for 5 mins</string>

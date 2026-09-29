@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A letter heading in the app drawer. -->
+<!-- A letter heading in the app drawer; indented to line up with the app names. -->
 <TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     style="@style/HomeText"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:paddingStart="16dp"
     android:paddingTop="20dp"
     android:paddingBottom="4dp"
     android:textSize="15sp"
-    android:textStyle="bold" />
+    android:textStyle="bold"
+    tools:ignore="RtlSymmetry" />

@@ -177,19 +177,23 @@ serif text in `#333333`, both tinted by the filter's warmth setting so it matche
 screens. With filtering on, the filter discards colour and tints by brightness, so the
 pre-tint isn't applied twice. It has two views.
 
-**Home page** (the default), a single page that doesn't scroll:
+**Home page** (the default), a single page that doesn't scroll (only the favourites do, if
+they don't fit):
 
 - **Clock** and **date** pinned to the top. The clock shows hours and minutes, without
   AM/PM, updated each minute (`ACTION_TIME_TICK`). With **Show seconds** on, it shows
   seconds too and ticks on each second boundary while visible. The date includes the day of
   the week and can be hidden. A hairline sits below them.
-- **Favourites**: up to six apps as a centred column of text labels, vertically centred in
+- **Favourites**: up to ten apps as a centred column of text labels, vertically centred in
   the space below the hairline. Two favourites sit in the middle of the page, not at the
-  top. Tap to open. **Long-press and drag** to reorder: the row follows your finger and the
-  others slide apart (a RecyclerView with `ItemTouchHelper`, drawn without lift, shadow or
-  scaling). The new order is saved on release. **Long-press and release** without moving to
-  replace or remove the app. While there's room, a faint **+ Add app** entry follows the
-  list. Saved across restarts.
+  top. If all ten don't fit (a small screen, a large font), the list scrolls within that
+  space, with faded edges, and the clock, date and "Search apps" stay put. Tap to open.
+  **Long-press and drag** to reorder: the row follows your finger and the others slide apart
+  (a RecyclerView with `ItemTouchHelper`, drawn without lift, shadow or scaling). The new
+  order is saved on release. **Long-press and release** without moving for a small menu:
+  **Remove from favourites**, **Move to top**, **Move to bottom** (a move that wouldn't
+  change anything isn't offered). Favourites are added from the drawer. With none yet, a
+  faint line says how. Saved across restarts.
 - **Search apps**, a faint underlined line pinned to the bottom. Tapping it opens the drawer
   with the keyboard up.
 
@@ -206,6 +210,16 @@ pre-tint isn't applied twice. It has two views.
   searching, the headings and index step aside for the ranked results.
 - An **A–Z index** down the right edge, like a contacts app. Tap a letter, or slide along
   it, to jump to that section. Its letters shrink to fit when the keyboard is up.
+- **Favourites** are marked with a small faint dot in the margin before the name (and
+  "favourite" in the spoken description).
+- **Long-press an app** for a menu: **Add to favourites** (only if it isn't one and there
+  are fewer than ten; it's added at the end), **Remove from favourites** (only if it is
+  one), and **App info** (Android's app info screen). The home page updates straight away.
+
+Both long-press menus (`PaperMenu`) are a small list on the tinted page colour, with
+hairlines between the rows, a hairline frame, and no shadow or animation. They appear just
+below the pressed item (or above it near the bottom of the screen). A tap outside or Back
+closes them.
 
 Back or Home returns from the drawer to the home page, and leaving for an app resets it too.
 On the home page, Back does nothing. The status bar and notification shade work as usual.

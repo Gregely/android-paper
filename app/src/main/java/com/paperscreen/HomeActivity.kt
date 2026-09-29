@@ -2,8 +2,8 @@ package com.paperscreen
 
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -12,7 +12,7 @@ import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -41,11 +41,14 @@ import java.util.Locale
 /**
  * A minimal home screen that reads like a page of a book, in two views:
  *
- * - **Home page:** clock and date at the top, up to six favourite apps as centred text in
- *   the middle, and "Search apps" at the bottom. Long-press a favourite and drag to reorder;
- *   long-press and release to replace or remove it.
+ * - **Home page:** clock and date at the top, up to ten favourite apps as centred text in
+ *   the middle (scrolling there if they don't fit), and "Search apps" at the bottom.
+ *   Long-press a favourite and drag to reorder; long-press and release for a menu to remove
+ *   it or move it to the top or bottom.
  * - **App drawer** (opened from "Search apps"): a search field, the alphabetical app list
- *   with letter headings, and an A–Z index strip. Back or Home returns to the home page.
+ *   with letter headings, and an A–Z index strip. Favourites are marked with a small dot.
+ *   Long-press an app to add it to or remove it from the favourites, or to open its app info.
+ *   Back or Home returns to the home page.
  *
  * No icons, wallpaper, widgets, dock or folders. Colours follow the filter's warmth setting;
  * clock format, size, date, seconds and font follow the Home screen settings.
@@ -63,6 +66,7 @@ class HomeActivity : Activity() {
     private lateinit var date: TextView
     private lateinit var rule: View
     private lateinit var favouritesView: RecyclerView
+    private lateinit var favouritesEmpty: TextView
     private lateinit var openDrawer: TextView
     private val favouritesAdapter = FavouritesAdapter()
 
@@ -79,8 +83,11 @@ class HomeActivity : Activity() {
     private var font = HomeFont.DEFAULT
     private var showSeconds = false
 
-    /** The replace/add picker, if open; dismissed when going home or on destroy. */
-    private var picker: AlertDialog? = null
+    /** The long-press menu (drawer or home page); closed when leaving or going home. */
+    private val menu by lazy { PaperMenu(this) }
+
+    /** Stored favourites, for marking them in the drawer. */
+    private var favouriteComponents: Set<ComponentName> = emptySet()
 
     /** A favourite is being dragged; app-list refreshes wait until it's dropped. */
     private var dragging = false
@@ -120,6 +127,7 @@ class HomeActivity : Activity() {
         date = findViewById(R.id.home_date)
         rule = findViewById(R.id.home_rule)
         favouritesView = findViewById(R.id.home_favourites)
+        favouritesEmpty = findViewById(R.id.home_favourites_empty)
         openDrawer = findViewById(R.id.home_open_drawer)
         drawer = findViewById(R.id.home_drawer)
         search = findViewById(R.id.home_search)
@@ -131,6 +139,11 @@ class HomeActivity : Activity() {
         list.adapter = drawerAdapter
         list.setOnItemClickListener { _, _, position, _ ->
             (drawerAdapter.getItem(position) as? Row.App)?.let { launch(it.app) }
+        }
+        list.setOnItemLongClickListener { _, view, position, _ ->
+            val app = (drawerAdapter.getItem(position) as? Row.App)?.app ?: return@setOnItemLongClickListener false
+            showDrawerMenu(view, app)
+            true
         }
         index.onLetter = { letter -> drawerAdapter.positionOf(letter)?.let { list.setSelectionFromTop(it, 0) } }
         setUpSearch()
@@ -171,6 +184,7 @@ class HomeActivity : Activity() {
     }
 
     override fun onStop() {
+        menu.dismiss()
         unregisterReceiver(timeReceiver)
         main.removeCallbacks(secondTick)
         // Coming back home (from an app, or the screen turning on) always shows the home page.
@@ -179,7 +193,7 @@ class HomeActivity : Activity() {
     }
 
     override fun onDestroy() {
-        picker?.dismiss()
+        menu.dismiss()
         main.removeCallbacks(secondTick)
         catalog.stop()
         super.onDestroy()
@@ -188,7 +202,7 @@ class HomeActivity : Activity() {
     /** The home button: back to the home page. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        picker?.dismiss()
+        menu.dismiss()
         closeDrawer()
     }
 
@@ -208,7 +222,7 @@ class HomeActivity : Activity() {
         date.visibility = if (settings.showDate) View.VISIBLE else View.GONE
 
         val regular = font.typeface()
-        listOf(clock, date, openDrawer, search).forEach { it.typeface = regular }
+        listOf(clock, date, openDrawer, search, favouritesEmpty).forEach { it.typeface = regular }
         index.typeface = regular
         favouritesAdapter.restyle()
         drawerAdapter.notifyDataSetChanged()
@@ -245,61 +259,83 @@ class HomeActivity : Activity() {
     private fun renderFavourites() {
         // Until the app list has loaded there's nothing to resolve the favourites against.
         favouritesAdapter.submit(if (catalog.apps.isEmpty()) null else liveFavourites())
+        favouritesChanged()
     }
 
-    /**
-     * Chooses an app to add (when [replacing] is null) or to put in place of favourite
-     * [replacing]; the latter also offers Remove.
-     */
-    private fun pickApp(replacing: Int?) {
-        val apps = catalog.apps
-        if (apps.isEmpty()) return
-        picker?.dismiss()
-        val adapter = DrawerAdapter().apply { submitPlain(apps) }
-        val builder = AlertDialog.Builder(this)
-            .setTitle(if (replacing == null) R.string.home_add_favourite_title else R.string.home_pick_favourite)
-            .setAdapter(adapter) { _, which ->
-                val chosen = apps[which].component.flattenToString()
-                updateFavourites { favourites ->
-                    when {
-                        replacing == null || replacing >= favourites.size -> favourites += chosen
-                        else -> favourites[replacing] = chosen
-                    }
-                }
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-        if (replacing != null) {
-            builder.setNeutralButton(R.string.home_remove_favourite) { _, _ ->
-                updateFavourites { if (replacing < it.size) it.removeAt(replacing) }
-            }
-        }
-        picker = builder.show().also { dialog ->
-            // The same warmth-tinted page as the home screen, not the default dialog white.
-            dialog.window?.setBackgroundDrawable(ColorDrawable(paper))
-            dialog.setOnDismissListener { if (picker === dialog) picker = null }
-        }
+    /** After any change to the favourites: the drawer's marks and the empty-page hint. */
+    private fun favouritesChanged() {
+        favouriteComponents = settings.favourites.mapNotNull(ComponentName::unflattenFromString).toSet()
+        drawerAdapter.notifyDataSetChanged()
+        val empty = catalog.apps.isNotEmpty() && favouritesAdapter.apps.isEmpty()
+        favouritesEmpty.visibility = if (empty) View.VISIBLE else View.GONE
     }
 
     /** Edits the live favourites (uninstalled ones are dropped on save) and redraws. */
-    private fun updateFavourites(edit: (MutableList<String>) -> Unit) {
-        val favourites = liveFavourites().map { it.component.flattenToString() }.toMutableList()
-        edit(favourites)
-        settings.favourites = favourites.distinct()
+    private fun updateFavourites(edit: (List<String>) -> List<String>) {
+        val favourites = liveFavourites().map { it.component.flattenToString() }
+        settings.favourites = edit(favourites).distinct()
         renderFavourites()
     }
 
-    /** Favourites as centred labels, then "+ Add app" while there's room for more. */
+    /** Saves the home page's current order (after a drag or a move from its menu). */
+    private fun saveFavouriteOrder() {
+        settings.favourites = favouritesAdapter.apps.map { it.component.flattenToString() }
+        favouritesChanged()
+    }
+
+    private fun menuColours() = PaperMenu.Colours(paper, ink, ruleColor, font.typeface())
+
+    /** Drawer long-press: add to or remove from favourites, and app info. */
+    private fun showDrawerMenu(anchor: View, app: AppCatalog.App) {
+        val key = app.component.flattenToString()
+        val favourites = liveFavourites().map { it.component.flattenToString() }
+        val items = buildList {
+            if (key in favourites) {
+                add(PaperMenu.Item(getString(R.string.menu_remove_favourite)) { updateFavourites { Favourites.remove(it, key) } })
+            } else if (Favourites.canAdd(favourites, key)) {
+                add(PaperMenu.Item(getString(R.string.menu_add_favourite)) { updateFavourites { Favourites.add(it, key) } })
+            }
+            add(PaperMenu.Item(getString(R.string.menu_app_info)) { openAppInfo(app) })
+        }
+        menu.show(anchor, items, menuColours(), PaperMenu.Align.TEXT_START)
+    }
+
+    /** Home page long-press released in place: remove, or move to the top or bottom. */
+    private fun showFavouriteMenu(anchor: View, app: AppCatalog.App) {
+        val apps = favouritesAdapter.apps
+        val position = favouritesAdapter.indexOf(app)
+        if (position < 0) return
+        val items = buildList {
+            add(PaperMenu.Item(getString(R.string.menu_remove_favourite)) { favouritesAdapter.remove(app) })
+            // Moves that wouldn't change anything aren't offered.
+            if (position > 0) {
+                add(PaperMenu.Item(getString(R.string.menu_move_top)) { favouritesAdapter.moveTo(app, 0) })
+            }
+            if (position < apps.lastIndex) {
+                add(PaperMenu.Item(getString(R.string.menu_move_bottom)) { favouritesAdapter.moveTo(app, Int.MAX_VALUE) })
+            }
+        }
+        menu.show(anchor, items, menuColours(), PaperMenu.Align.CENTRE)
+    }
+
+    private fun openAppInfo(app: AppCatalog.App) {
+        try {
+            launcherApps.startAppDetailsActivity(app.component, app.user, null, null)
+        } catch (e: RuntimeException) {
+            Toast.makeText(this, getString(R.string.home_app_info_failed, app.label), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Favourites as centred labels. */
     private inner class FavouritesAdapter : RecyclerView.Adapter<FavouritesAdapter.Holder>() {
         val apps = ArrayList<AppCatalog.App>()
-        private var showAdd = false
 
         inner class Holder(val label: TextView) : RecyclerView.ViewHolder(label)
 
-        @SuppressLint("NotifyDataSetChanged") // The whole list is replaced; at most seven rows.
+        @SuppressLint("NotifyDataSetChanged") // The whole list is replaced; at most ten rows.
         fun submit(favourites: List<AppCatalog.App>?) {
             apps.clear()
             favourites?.let(apps::addAll)
-            showAdd = favourites != null && favourites.size < Favourites.MAX
             notifyDataSetChanged()
         }
 
@@ -316,10 +352,30 @@ class HomeActivity : Activity() {
             notifyItemMoved(from, to)
         }
 
-        fun isAddRow(position: Int) = position == apps.size
+        /** Where [app] is now, by component: the list may have been reloaded since. */
+        fun indexOf(app: AppCatalog.App) = apps.indexOfFirst { it.component == app.component }
 
-        override fun getItemCount() = apps.size + if (showAdd) 1 else 0
-        override fun getItemViewType(position: Int) = if (isAddRow(position)) TYPE_ADD else TYPE_APP
+        /** From the menu: moves [app] to [to] (clamped to the list), animated, and saves. */
+        fun moveTo(app: AppCatalog.App, to: Int) {
+            val from = indexOf(app)
+            if (from < 0) return
+            val target = to.coerceIn(0, apps.lastIndex)
+            if (from == target) return
+            move(from, target)
+            favouritesView.scrollToPosition(target)
+            saveFavouriteOrder()
+        }
+
+        /** From the menu: removes [app], animated, and saves. */
+        fun remove(app: AppCatalog.App) {
+            val position = indexOf(app)
+            if (position < 0) return
+            apps.removeAt(position)
+            notifyItemRemoved(position)
+            saveFavouriteOrder()
+        }
+
+        override fun getItemCount() = apps.size
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = Holder(
             LayoutInflater.from(parent.context).inflate(R.layout.item_home_favourite, parent, false) as TextView,
@@ -327,25 +383,17 @@ class HomeActivity : Activity() {
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
             val label = holder.label
+            val app = apps[position]
             label.typeface = font.typeface()
-            if (isAddRow(position)) {
-                label.text = getString(R.string.home_add_favourite)
-                label.textSize = 16f
-                label.setTextColor(faintInk)
-                label.setOnClickListener { pickApp(replacing = null) }
-            } else {
-                val app = apps[position]
-                label.text = app.label
-                label.textSize = 22f
-                label.setTextColor(ink)
-                label.setOnClickListener { launch(app) }
-            }
+            label.text = app.label
+            label.setTextColor(ink)
+            label.setOnClickListener { launch(app) }
         }
     }
 
     /**
      * Long-press picks a favourite up; dragging moves it and the others slide apart. The new
-     * order is saved on release. Releasing without moving opens replace/remove instead.
+     * order is saved on release. Releasing without moving opens the favourite's menu instead.
      */
     private inner class FavouriteDragCallback : ItemTouchHelper.Callback() {
         private var moved = false
@@ -354,11 +402,7 @@ class HomeActivity : Activity() {
         override fun isItemViewSwipeEnabled() = false
 
         override fun getMovementFlags(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder): Int =
-            if (favouritesAdapter.isAddRow(viewHolder.bindingAdapterPosition)) {
-                0
-            } else {
-                makeMovementFlags(ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0)
-            }
+            makeMovementFlags(ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0)
 
         override fun onMove(
             recyclerView: RecyclerView,
@@ -368,7 +412,6 @@ class HomeActivity : Activity() {
             val from = viewHolder.bindingAdapterPosition
             val to = target.bindingAdapterPosition
             if (from == RecyclerView.NO_POSITION || to == RecyclerView.NO_POSITION) return false
-            if (favouritesAdapter.isAddRow(to)) return false // "+ Add app" stays last.
             favouritesAdapter.move(from, to)
             moved = true
             return true
@@ -389,12 +432,11 @@ class HomeActivity : Activity() {
             viewHolder.itemView.translationY = 0f
             dragging = false
             if (moved) {
-                settings.favourites = favouritesAdapter.apps.map { it.component.flattenToString() }
+                saveFavouriteOrder()
             } else if (resumed) {
                 // A long-press released in place (not one interrupted by leaving the screen).
-                val position = viewHolder.bindingAdapterPosition
-                if (position != RecyclerView.NO_POSITION && !favouritesAdapter.isAddRow(position)) {
-                    pickApp(replacing = position)
+                favouritesAdapter.apps.getOrNull(viewHolder.bindingAdapterPosition)?.let { app ->
+                    showFavouriteMenu(viewHolder.itemView, app)
                 }
             }
             moved = false
@@ -432,6 +474,7 @@ class HomeActivity : Activity() {
 
     private fun closeDrawer() {
         if (!isDrawerOpen) return
+        menu.dismiss()
         hideKeyboard()
         search.text.clear()
         search.clearFocus()
@@ -504,6 +547,7 @@ class HomeActivity : Activity() {
         date.setTextColor(ink)
         rule.setBackgroundColor(ruleColor)
         openDrawer.setTextColor(faintInk)
+        favouritesEmpty.setTextColor(faintInk)
         openDrawer.backgroundTintList = ColorStateList.valueOf(ruleColor)
         search.setTextColor(ink)
         search.setHintTextColor(faintInk)
@@ -567,6 +611,10 @@ class HomeActivity : Activity() {
                 is Row.App -> {
                     view.text = row.app.label
                     view.typeface = font.typeface()
+                    val favourite = row.app.component in favouriteComponents
+                    markFavourite(view, favourite)
+                    view.contentDescription =
+                        if (favourite) getString(R.string.home_favourite_description, row.app.label) else null
                 }
             }
             view.setTextColor(ink)
@@ -574,8 +622,34 @@ class HomeActivity : Activity() {
         }
     }
 
+    /**
+     * A small faint dot in the row's start gutter marks a favourite. The name stays where it
+     * is: the dot and its gap take the place of that much start padding.
+     */
+    private fun markFavourite(view: TextView, favourite: Boolean) {
+        val density = resources.displayMetrics.density
+        val gutter = (GUTTER_DP * density).toInt()
+        val dot = if (favourite) {
+            GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(faintInk)
+                val size = (DOT_DP * density).toInt()
+                setSize(size, size)
+                setBounds(0, 0, size, size)
+            }
+        } else {
+            null
+        }
+        val gap = (DOT_GAP_DP * density).toInt()
+        view.compoundDrawablePadding = gap
+        view.setCompoundDrawablesRelative(dot, null, null, null)
+        val start = if (dot == null) gutter else gutter - dot.bounds.width() - gap
+        view.setPaddingRelative(start, view.paddingTop, view.paddingEnd, view.paddingBottom)
+    }
+
     private companion object {
-        const val TYPE_APP = 0
-        const val TYPE_ADD = 1
+        const val DOT_DP = 5
+        const val DOT_GAP_DP = 6
+        const val GUTTER_DP = 16
     }
 }

@@ -1,28 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The home screen: a page of an e-reader. Colours are applied in code from the warmth setting. -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  The home screen: a calm home page, and an app drawer that replaces it while open.
+  Colours are applied in code from the warmth setting.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/home_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:animateLayoutChanges="true"
-    android:orientation="vertical"
-    android:paddingStart="28dp"
-    android:paddingEnd="28dp">
+    tools:ignore="MergeRootFrame">
 
-    <!-- Clock, date and favourites; tucked away while a search is typed. -->
+    <!-- Home page: clock and date pinned to the top, favourites centred, "Search apps" at the bottom. -->
     <LinearLayout
-        android:id="@+id/home_header"
+        android:id="@+id/home_page"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="32dp"
+        android:paddingEnd="32dp">
 
         <TextView
             android:id="@+id/home_clock"
             style="@style/HomeText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="40dp"
+            android:layout_marginTop="48dp"
             android:gravity="center_horizontal"
             android:includeFontPadding="false"
             android:textSize="76sp"
@@ -39,49 +41,99 @@
             tools:text="Tuesday, 29 September 2026" />
 
         <View
-            android:id="@+id/home_rule_top"
+            android:id="@+id/home_rule"
             style="@style/HomeRule"
             android:layout_marginTop="28dp"
             tools:ignore="PxUsage" />
 
-        <!-- Favourite slots, added in code. -->
-        <LinearLayout
-            android:id="@+id/home_favourites"
+        <!--
+          Fills the space below the rule. fillViewport stretches the short favourites column to
+          that height and its gravity centres the labels; six long names can still scroll.
+        -->
+        <ScrollView
             android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:orientation="horizontal" />
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true"
+            android:scrollbars="none">
 
-        <View
-            android:id="@+id/home_rule_bottom"
-            style="@style/HomeRule"
-            tools:ignore="PxUsage" />
+            <LinearLayout
+                android:id="@+id/home_favourites"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingTop="16dp"
+                android:paddingBottom="16dp" />
+        </ScrollView>
+
+        <TextView
+            android:id="@+id/home_open_drawer"
+            style="@style/HomeText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="28dp"
+            android:background="@drawable/home_search_underline"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:text="@string/home_search_hint"
+            android:textSize="17sp" />
     </LinearLayout>
 
-    <EditText
-        android:id="@+id/home_search"
-        style="@style/HomeText"
+    <!-- App drawer: search at the top, sectioned A–Z list, index strip on the right. -->
+    <LinearLayout
+        android:id="@+id/home_drawer"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
-        android:background="@drawable/home_search_underline"
-        android:hint="@string/home_search_hint"
-        android:imeOptions="actionGo|flagNoExtractUi"
-        android:importantForAutofill="no"
-        android:inputType="text|textNoSuggestions"
-        android:paddingTop="10dp"
-        android:paddingBottom="10dp"
-        android:singleLine="true"
-        android:textCursorDrawable="@null"
-        android:textSize="17sp" />
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="32dp"
+        android:visibility="gone"
+        tools:ignore="RtlSymmetry">
 
-    <ListView
-        android:id="@+id/home_apps"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:divider="@null"
-        android:fadingEdgeLength="24dp"
-        android:listSelector="@android:color/transparent"
-        android:requiresFadingEdge="vertical"
-        android:scrollbars="none" />
-</LinearLayout>
+        <EditText
+            android:id="@+id/home_search"
+            style="@style/HomeText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:layout_marginEnd="32dp"
+            android:background="@drawable/home_search_underline"
+            android:hint="@string/home_search_hint"
+            android:imeOptions="actionGo|flagNoExtractUi"
+            android:importantForAutofill="no"
+            android:inputType="text|textNoSuggestions"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:singleLine="true"
+            android:textCursorDrawable="@null"
+            android:textSize="17sp" />
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="8dp">
+
+            <ListView
+                android:id="@+id/home_apps"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_marginEnd="32dp"
+                android:divider="@null"
+                android:fadingEdgeLength="24dp"
+                android:listSelector="@android:color/transparent"
+                android:requiresFadingEdge="vertical"
+                android:scrollbars="none" />
+
+            <com.paperscreen.AlphabetStrip
+                android:id="@+id/home_index"
+                android:layout_width="32dp"
+                android:layout_height="match_parent"
+                android:layout_gravity="end"
+                android:paddingTop="8dp"
+                android:paddingBottom="16dp" />
+        </FrameLayout>
+    </LinearLayout>
+</FrameLayout>

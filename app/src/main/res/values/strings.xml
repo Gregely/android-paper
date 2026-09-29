@@ -66,9 +66,10 @@
     <string name="home_screen_hint">A page-style home screen: clock, date, favourites and an alphabetical list of apps, all as text. Long-press a favourite on the home screen to change it. Turning this off opens the system\'s default home app setting.</string>
     <string name="home_label">PaperScreen Home</string>
     <string name="home_search_hint">Search apps</string>
-    <string name="home_add_favourite">+</string>
-    <string name="home_empty_slot_description">Empty favourite. Long-press to add an app.</string>
-    <string name="home_pick_favourite">Choose a favourite</string>
+    <string name="home_add_favourite">+ Add app</string>
+    <string name="home_index_description">Alphabet index. Tap a letter to jump to it.</string>
+    <string name="home_pick_favourite">Replace favourite</string>
+    <string name="home_add_favourite_title">Add a favourite</string>
     <string name="home_remove_favourite">Remove</string>
     <string name="home_launch_failed">Couldn\'t open %1$s</string>
 

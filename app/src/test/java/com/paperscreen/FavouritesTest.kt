@@ -6,19 +6,25 @@ import org.junit.Test
 class FavouritesTest {
 
     @Test
-    fun missingStorageIsFiveEmptySlots() {
-        assertEquals(List(Favourites.SLOTS) { null }, Favourites.decode(null))
+    fun missingStorageIsEmpty() {
+        assertEquals(emptyList<String>(), Favourites.decode(null))
     }
 
     @Test
-    fun roundTripKeepsSlotPositions() {
-        val slots = listOf("a/.A", null, "b/.B", null, "c/.C")
-        assertEquals(slots, Favourites.decode(Favourites.encode(slots)))
+    fun roundTripKeepsOrder() {
+        val favourites = listOf("c/.C", "a/.A", "b/.B")
+        assertEquals(favourites, Favourites.decode(Favourites.encode(favourites)))
     }
 
     @Test
-    fun shortOrLongInputIsNormalisedToFiveSlots() {
-        assertEquals(listOf("a/.A", null, null, null, null), Favourites.decode("a/.A"))
-        assertEquals(5, Favourites.decode("1\n2\n3\n4\n5\n6\n7").size)
+    fun olderSlotFormatIsCompacted() {
+        // The previous home screen stored five fixed slots, with blank lines for empty ones.
+        assertEquals(listOf("a/.A", "b/.B"), Favourites.decode("a/.A\n\nb/.B\n\n"))
+    }
+
+    @Test
+    fun atMostSixAreKept() {
+        assertEquals(Favourites.MAX, Favourites.decode((1..9).joinToString("\n")).size)
+        assertEquals(Favourites.MAX, Favourites.decode(Favourites.encode((1..9).map { "$it" })).size)
     }
 }

@@ -94,8 +94,8 @@ class PaperSettings(context: Context) {
         get() = prefs.getBoolean(KEY_SERVICE_PROMPTED, false)
         set(value) = prefs.edit().putBoolean(KEY_SERVICE_PROMPTED, value).apply()
 
-    /** Home screen favourites, one flattened ComponentName (or null) per slot. */
-    var favourites: List<String?>
+    /** Home screen favourites, in order, as flattened ComponentNames. */
+    var favourites: List<String>
         get() = Favourites.decode(prefs.getString(KEY_FAVOURITES, null))
         set(value) = prefs.edit().putString(KEY_FAVOURITES, Favourites.encode(value)).apply()
 

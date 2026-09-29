@@ -120,27 +120,40 @@ same code over a `PixelCopy` snapshot of its own window.
 
 ## Home screen (optional launcher)
 
-`HomeActivity` is a minimal home screen that reads like a page of an e-reader: a white page
-and serif text in `#333333`, both tinted by the filter's warmth setting so it matches filtered
+`HomeActivity` is a minimal home screen that reads like a page of a book: a white page and
+serif text in `#333333`, both tinted by the filter's warmth setting so it matches filtered
 screens. With filtering on, the filter discards colour and tints by brightness, so the
-pre-tint isn't applied twice. From top to bottom:
+pre-tint isn't applied twice. It has two views.
 
-- **Clock**, hours and minutes only, updated each minute (`ACTION_TIME_TICK`), in the
-  system's 12/24-hour style without AM/PM.
-- **Date**, with the day of the week.
-- A hairline, then **favourites**: up to five apps as text labels. Tap to open. Long-press
-  to change or remove the app; long-press (or tap) an empty `+` slot to add one. Saved
-  across restarts.
-- A hairline, then a **search field**, an underlined text field that filters the list as
-  you type. Prefix matches come first, then word starts, then matches anywhere; case and
-  accents are ignored. **Go** on the keyboard opens the first result. While a search is
-  typed, the clock and favourites step aside to give results the whole page.
-- The **app list**: every launchable app, alphabetical, names only. Tap to open.
+**Home page** (the default), a single page that doesn't scroll:
 
-There's no wallpaper, widgets, dock, folders or icons. Home returns here (and resets the
-page). Back does nothing, apart from clearing a search. The status bar and notification shade
-work as usual. The list updates itself as apps are installed, updated or removed
-(`LauncherApps.Callback`).
+- **Clock** and **date** pinned to the top. The clock shows hours and minutes only,
+  updated each minute (`ACTION_TIME_TICK`), in the system's 12/24-hour style without AM/PM.
+  The date includes the day of the week. A hairline sits below them.
+- **Favourites**: up to six apps as a centred column of text labels, vertically centred in
+  the space below the hairline. Two favourites sit in the middle of the page, not at the
+  top. Tap to open; long-press to replace or remove. While there's room, a faint
+  **+ Add app** entry follows the list. Saved across restarts. Favourites from the earlier
+  five-slot layout carry over.
+- **Search apps**, a faint underlined line pinned to the bottom. Tapping it opens the drawer
+  with the keyboard up.
+
+**App drawer**, which replaces the home page while open:
+
+- A **search field** at the top. It filters as you type, ignoring case and accents, and
+  ranks prefix matches first, then word starts, then matches anywhere. **Go** on the
+  keyboard opens the top result.
+- The **app list**: every launchable app, names only, under bold letter headings (A, B, C…).
+  Accented names go under their base letter, and names starting with digits or symbols
+  under `#` at the end. While searching, the headings and index step aside for the ranked
+  results.
+- An **A–Z index** down the right edge, like a contacts app. Tap a letter, or slide along
+  it, to jump to that section. Its letters shrink to fit when the keyboard is up.
+
+Back or Home returns from the drawer to the home page, and leaving for an app resets it too.
+On the home page, Back does nothing. The status bar and notification shade work as usual.
+There's no wallpaper, widgets, dock, folders or icons. The app list updates itself as apps
+are installed, updated or removed (`LauncherApps.Callback`).
 
 **Setting it as the launcher:** Settings → Home screen → **Use as home screen** asks the
 system to make PaperScreen the default home app (`RoleManager.ROLE_HOME`). The switch shows

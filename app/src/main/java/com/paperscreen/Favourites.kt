@@ -1,17 +1,15 @@
 package com.paperscreen
 
 /**
- * The home screen's favourite slots, stored as one string: one flattened ComponentName per
- * slot, separated by newlines, with an empty line for an empty slot.
+ * The home screen's favourites: an ordered list of up to [MAX] apps, stored as one string
+ * of flattened ComponentNames separated by newlines. Blank entries (from the older
+ * fixed-slot format) are skipped.
  */
 object Favourites {
-    const val SLOTS = 5
+    const val MAX = 6
 
-    fun decode(stored: String?): List<String?> {
-        val parts = stored.orEmpty().split('\n')
-        return List(SLOTS) { i -> parts.getOrNull(i)?.takeIf { it.isNotBlank() } }
-    }
+    fun decode(stored: String?): List<String> =
+        stored.orEmpty().split('\n').filter { it.isNotBlank() }.take(MAX)
 
-    fun encode(slots: List<String?>): String =
-        List(SLOTS) { i -> slots.getOrNull(i).orEmpty() }.joinToString("\n")
+    fun encode(favourites: List<String>): String = favourites.take(MAX).joinToString("\n")
 }

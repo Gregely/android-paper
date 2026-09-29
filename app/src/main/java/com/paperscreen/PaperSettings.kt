@@ -30,6 +30,11 @@ class PaperSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ON_CHANGE, true)
         set(value) = prefs.edit().putBoolean(KEY_ON_CHANGE, value).apply()
 
+    /** Whether filtering is on; restored when the accessibility service reconnects. */
+    var captureEnabled: Boolean
+        get() = prefs.getBoolean(KEY_CAPTURE_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_CAPTURE_ENABLED, value).apply()
+
     var servicePromptShown: Boolean
         get() = prefs.getBoolean(KEY_SERVICE_PROMPTED, false)
         set(value) = prefs.edit().putBoolean(KEY_SERVICE_PROMPTED, value).apply()
@@ -45,6 +50,7 @@ class PaperSettings(context: Context) {
         const val KEY_LEVELS = "grey_levels"
         const val KEY_ON_CHANGE = "refresh_on_change"
         private const val KEY_SERVICE_PROMPTED = "service_prompt_shown"
+        private const val KEY_CAPTURE_ENABLED = "capture_enabled"
 
         const val MIN_INTERVAL_MS = 200
         const val MAX_INTERVAL_MS = 2000

@@ -2,22 +2,13 @@ package com.paperscreen
 
 import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
-import android.content.pm.ServiceInfo
-import android.graphics.drawable.Icon
+import android.graphics.Rect
 import android.hardware.display.DisplayManager
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
-import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -26,34 +17,33 @@ import android.os.Process
 import android.os.SystemClock
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Owns the whole pipeline: screen capture, filtering, and the full-screen overlay.
+ * Owns the whole pipeline: per-window capture, filtering, and the full-screen overlay.
  *
- * It is an AccessibilityService only so its overlay can use TYPE_ACCESSIBILITY_OVERLAY, which
- * may be fully opaque while still passing touches through. It reads no accessibility events
- * and no window content. Enabling the service in system settings just makes it ready;
- * capture runs between [startCapture] (after the user grants screen-capture consent in
- * [SettingsActivity]) and [stopCapture], as a mediaProjection foreground service.
+ * The overlay is a TYPE_ACCESSIBILITY_OVERLAY window, so it can be fully opaque while
+ * touches pass through. The screen underneath is rebuilt from per-window screenshots
+ * ([WindowCapturer]), which never include the overlay, so it stays opaque the whole time.
  *
  * Each refresh is one page turn:
  *
- * 1. the overlay flashes to flat grey, hiding the old frame,
- * 2. near the end of the flash it goes clear for a single frame, and that frame is captured
- *    (the grey is back on the next vsync),
- * 3. the capture is filtered on a worker thread and replaces the flash.
+ * 1. the overlay flashes to flat grey,
+ * 2. meanwhile every window under it is captured, composited and filtered in the background,
+ * 3. the new filtered frame replaces the flash (no sooner than ~80 ms after it began).
  *
- * Refreshes happen every interval, or — with "refresh on change" — only once the screen has
- * changed, at most once per interval. Capture pauses while the screen is off or locked.
+ * Refreshes happen every interval, or — with "refresh on change" — when accessibility events
+ * report that something on screen changed, at most once per interval. Capture pauses while
+ * the screen is off or locked.
  */
-class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.Listener {
+class PaperScreenAccessibilityService : AccessibilityService(), WindowCapturer.Listener {
 
     /** What the settings screen can do with the service. */
     enum class State { DISABLED, READY, RUNNING }
 
-    private enum class Phase { PAUSED, IDLE, FLASHING, CAPTURING, PROCESSING }
+    private enum class Phase { PAUSED, IDLE, CAPTURING }
 
     private val main = Handler(Looper.getMainLooper())
     private lateinit var settings: PaperSettings
@@ -63,43 +53,34 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
 
     // One capture session, from startCapture to stopCapture.
     private var workerThread: HandlerThread? = null
-    private var projection: MediaProjection? = null
-    private var capturer: ScreenCapturer? = null
+    private var capturer: WindowCapturer? = null
     private var overlay: OverlayWindow? = null
-    private var listenersRegistered = false
 
     private var phase = Phase.PAUSED
     /** Incremented whenever an in-flight refresh must be abandoned. */
     private var seq = 0
     private var lastRefreshStart = 0L
     private var flashStart = 0L
-    private var displayedFrame: ScreenCapturer.Frame? = null
+    private var displayedFrame: WindowCapturer.Frame? = null
+
+    /** Something changed while a capture was already running. */
+    private var changedDuringCapture = false
 
     /**
-     * The last capture was blanked by FLAG_SECURE content, so the overlay is clear and the
-     * secure app shows through unfiltered. There's nothing to hide, so the next refresh
-     * captures without a flash first.
+     * Extra delay for change-triggered refreshes after ones that found nothing new, so a
+     * stream of events without visible changes can't keep the screen flashing.
      */
-    private var passthrough = false
-
-    /**
-     * How many frames the overlay goes clear to be captured. One is enough unless the
-     * compositor drops the clear frame (a missed capture); then this steps up, and back down
-     * after a run of clean captures.
-     */
-    private var clearFrames = 1
-    private var cleanCaptures = 0
+    private var backoffMs = 0L
 
     private var intervalMs = PaperSettings.DEFAULT_INTERVAL_MS
     private var refreshOnChange = true
     private var scheduledAt = NOT_SCHEDULED
-    private var watchIgnoreMs = 0L
     private val refreshRunnable = Runnable {
         scheduledAt = NOT_SCHEDULED
         beginRefresh()
     }
 
-    private val isCapturing: Boolean get() = projection != null
+    private val isCapturing: Boolean get() = overlay != null
 
     // --- Accessibility service lifecycle --------------------------------------------------
 
@@ -109,16 +90,21 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
         displayManager = getSystemService(DisplayManager::class.java)
         display = displayManager.getDisplay(Display.DEFAULT_DISPLAY)
         geometry = DisplayGeometry.of(display)
-        createNotificationChannel()
         instance = this
-        notifyState()
+        // No consent is needed any more, so pick up where the user left off (e.g. after a reboot).
+        if (settings.captureEnabled) startCapture() else notifyState()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // The config only subscribes to event types that usually mean something visible changed.
+        if (isCapturing && refreshOnChange) onContentChanged()
+    }
 
     override fun onInterrupt() = Unit
 
     override fun onUnbind(intent: Intent?): Boolean {
+        // The user turned the service off; don't restart capture when it's turned back on.
+        if (::settings.isInitialized) settings.captureEnabled = false
         disconnect()
         return super.onUnbind(intent)
     }
@@ -136,41 +122,14 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
 
     // --- Capture session ------------------------------------------------------------------
 
-    /** Starts filtering the screen with a consent result from MediaProjectionManager. */
-    private fun startCapture(resultCode: Int, data: Intent): Boolean {
+    private fun startCapture(): Boolean {
         if (isCapturing) return true
-        try {
-            // The mediaProjection foreground type must be active before the projection exists.
-            startInForeground()
-        } catch (e: RuntimeException) {
-            return false
-        }
-        val mediaProjection = try {
-            getSystemService(MediaProjectionManager::class.java).getMediaProjection(resultCode, data)
-        } catch (e: SecurityException) {
-            null
-        }
-        if (mediaProjection == null) {
-            stopForeground(Service.STOP_FOREGROUND_REMOVE)
-            return false
-        }
-        projection = mediaProjection
-        // Required before createVirtualDisplay on Android 14.
-        mediaProjection.registerCallback(projectionCallback, main)
-        if (!startPipeline(mediaProjection)) {
-            stopCapture()
-            return false
-        }
-        notifyState()
-        return true
-    }
-
-    private fun startPipeline(mediaProjection: MediaProjection): Boolean {
         geometry = DisplayGeometry.of(display)
         val window = OverlayWindow(this)
         try {
             window.attach(geometry)
         } catch (e: RuntimeException) {
+            notifyState()
             return false
         }
         window.setVisible(false)
@@ -180,11 +139,9 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
         workerThread = thread
         intervalMs = settings.refreshIntervalMs
         refreshOnChange = settings.refreshOnChange
-        clearFrames = 1
-        cleanCaptures = 0
-        capturer = ScreenCapturer(mediaProjection, Handler(thread.looper), main, this).apply {
+        backoffMs = 0L
+        capturer = WindowCapturer(this, Handler(thread.looper), main, this).apply {
             filterParams = settings.filterParams()
-            start(geometry)
         }
 
         settings.prefs.registerOnSharedPreferenceChangeListener(prefsListener)
@@ -194,43 +151,30 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_USER_PRESENT)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(screenReceiver, filter)
-        }
-        listenersRegistered = true
+        registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
 
-        if (isScreenUsable()) resume() else updateNotification()
+        settings.captureEnabled = true
+        if (isScreenUsable()) resume()
+        notifyState()
         return true
     }
 
     /** Tears the session down; the accessibility service itself stays enabled and idle. */
     private fun stopCapture() {
-        if (projection == null && overlay == null && capturer == null) return
+        val window = overlay ?: return
         phase = Phase.PAUSED
         seq++
         cancelScheduledRefresh()
-        if (listenersRegistered) {
-            listenersRegistered = false
-            settings.prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
-            displayManager.unregisterDisplayListener(displayListener)
-            unregisterReceiver(screenReceiver)
-        }
-        overlay?.detach()
+        settings.prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        displayManager.unregisterDisplayListener(displayListener)
+        unregisterReceiver(screenReceiver)
+        window.detach()
         overlay = null
         capturer?.release()
         capturer = null
         workerThread?.quitSafely()
         workerThread = null
         displayedFrame = null
-        passthrough = false
-        projection?.let {
-            it.unregisterCallback(projectionCallback)
-            it.stop()
-        }
-        projection = null
-        stopForeground(Service.STOP_FOREGROUND_REMOVE)
         notifyState()
     }
 
@@ -240,7 +184,11 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
     private fun requestRefresh(delayMs: Long? = null) {
         if (phase != Phase.IDLE) return
         val now = SystemClock.uptimeMillis()
-        val at = if (delayMs != null) now + delayMs else max(now, lastRefreshStart + intervalMs)
+        val at = if (delayMs != null) {
+            now + delayMs
+        } else {
+            max(now, lastRefreshStart + intervalMs + if (refreshOnChange) backoffMs else 0L)
+        }
         if (scheduledAt != NOT_SCHEDULED && scheduledAt <= at) return
         main.removeCallbacks(refreshRunnable)
         main.postAtTime(refreshRunnable, at)
@@ -257,47 +205,26 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
         val window = overlay ?: return
         val cap = capturer ?: return
         val refresh = ++seq
+        phase = Phase.CAPTURING
+        changedDuringCapture = false
         lastRefreshStart = SystemClock.uptimeMillis()
-
-        if (passthrough) {
-            // The overlay is already clear, so capture right away; the flash follows.
-            phase = Phase.CAPTURING
-            cap.grab(refresh, GRAB_TIMEOUT_MS)
-            window.view.nudge()
-            return
-        }
-
-        phase = Phase.FLASHING
         flashStart = lastRefreshStart
         window.view.showFlash()
-        val g = geometry
-        // Once the flash is on screen, start watching composited frames for a reference.
-        main.postDelayed({
-            if (seq == refresh && phase == Phase.FLASHING) cap.prepareGrab()
-        }, g.settleMs)
-        // Near the end of the flash, go clear for a single frame and capture it.
-        main.postDelayed({
-            if (seq != refresh || phase != Phase.FLASHING) return@postDelayed
-            phase = Phase.CAPTURING
-            cap.grab(refresh, GRAB_TIMEOUT_MS)
-            window.view.blinkClear(clearFrames)
-        }, max(g.settleMs + g.frameMs, OverlayWindow.FLASH_MS - 3 * g.frameMs))
+        cap.capture(refresh, captureTargets(), geometry.width, geometry.height)
     }
 
-    override fun onFrameCaptured(seq: Int) {
+    /** Every reported window except accessibility overlays (ours included, if it were listed). */
+    private fun captureTargets(): List<WindowCapturer.Target> =
+        windows
+            .filter { it.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }
+            .map { info ->
+                val bounds = Rect()
+                info.getBoundsInScreen(bounds)
+                WindowCapturer.Target(info.id, info.layer, bounds)
+            }
+
+    override fun onFrameProcessed(seq: Int, frame: WindowCapturer.Frame?) {
         if (seq != this.seq || phase != Phase.CAPTURING) return
-        phase = Phase.PROCESSING
-        if (passthrough) {
-            // Coming out of passthrough: flash now, over the live screen.
-            flashStart = SystemClock.uptimeMillis()
-            overlay?.view?.showFlash()
-        }
-    }
-
-    override fun onFrameProcessed(seq: Int, frame: ScreenCapturer.Frame?) {
-        if (seq != this.seq || phase != Phase.PROCESSING) return
-        passthrough = false
-        noteCleanCapture()
         if (frame == null && refreshOnChange) {
             // Nothing visible changed; go straight back to the same frame.
             show(displayedFrame)
@@ -307,51 +234,29 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
         val next = frame ?: displayedFrame
         val remaining = max(0L, flashStart + OverlayWindow.FLASH_MS - SystemClock.uptimeMillis())
         main.postDelayed({
-            if (seq != this.seq || phase != Phase.PROCESSING) return@postDelayed
+            if (seq != this.seq || phase != Phase.CAPTURING) return@postDelayed
             show(next)
             finishRefresh(changed = frame != null)
         }, remaining)
     }
 
-    override fun onFrameBlank(seq: Int) {
+    override fun onCaptureFailed(seq: Int) {
         if (seq != this.seq || phase != Phase.CAPTURING) return
-        noteCleanCapture()
-        // Leave the (secure) content visible rather than freezing a black screen over it.
-        val wasShowingFrame = displayedFrame != null
-        passthrough = true
-        show(null)
-        finishRefresh(changed = wasShowingFrame)
-    }
-
-    override fun onCaptureTimedOut(seq: Int) {
-        if (seq != this.seq || (phase != Phase.CAPTURING && phase != Phase.PROCESSING)) return
-        if (!passthrough) {
-            // The clear frame probably never reached the compositor; stay clear longer next time.
-            clearFrames = min(clearFrames + 1, MAX_CLEAR_FRAMES)
-            cleanCaptures = 0
-        }
-        val nothingToShow = displayedFrame == null && !passthrough
-        if (nothingToShow) {
-            overlay?.view?.showFlash() // Keep the live screen covered.
-        } else {
-            show(displayedFrame)
-        }
+        val nothingToShow = displayedFrame == null
+        show(displayedFrame) // With no frame yet, this keeps the flash up.
         finishRefresh(changed = false)
         if (nothingToShow) requestRefresh()
     }
 
-    override fun onContentChanged() {
-        if (refreshOnChange) requestRefresh()
-    }
-
-    private fun noteCleanCapture() {
-        if (clearFrames > 1 && ++cleanCaptures >= CLEAN_CAPTURES_TO_STEP_DOWN) {
-            clearFrames--
-            cleanCaptures = 0
+    private fun onContentChanged() {
+        when (phase) {
+            Phase.IDLE -> requestRefresh()
+            Phase.CAPTURING -> changedDuringCapture = true
+            Phase.PAUSED -> Unit
         }
     }
 
-    private fun show(frame: ScreenCapturer.Frame?) {
+    private fun show(frame: WindowCapturer.Frame?) {
         displayedFrame = frame
         capturer?.displayed = frame
         overlay?.view?.showFrame(frame?.bitmap)
@@ -359,25 +264,9 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
 
     private fun finishRefresh(changed: Boolean) {
         phase = Phase.IDLE
-        if (!refreshOnChange) {
-            requestRefresh()
-            return
-        }
-        // Our own redraw is composited (and seen by the watcher) shortly after it's recorded,
-        // so start the ignore window from the draw. If refreshes keep finding nothing new,
-        // something is re-triggering them; back off so a loop can't strobe the screen.
-        watchIgnoreMs = if (changed) {
-            baseWatchIgnoreMs()
-        } else {
-            (watchIgnoreMs * 2).coerceIn(baseWatchIgnoreMs(), MAX_WATCH_IGNORE_MS)
-        }
-        val refresh = seq
-        overlay?.view?.doAfterNextDraw {
-            if (seq == refresh && phase == Phase.IDLE && refreshOnChange) capturer?.watch(watchIgnoreMs)
-        }
+        backoffMs = if (changed) 0L else min(max(backoffMs * 2, MIN_BACKOFF_MS), MAX_BACKOFF_MS)
+        if (!refreshOnChange || changedDuringCapture) requestRefresh()
     }
-
-    private fun baseWatchIgnoreMs() = geometry.settleMs + WATCH_MARGIN_MS
 
     // --- Pause / resume / geometry -------------------------------------------------------
 
@@ -386,47 +275,31 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
         phase = Phase.PAUSED
         seq++
         cancelScheduledRefresh()
-        capturer?.idle()
-        overlay?.view?.cancelAfterDraw()
+        capturer?.cancel()
         show(null)
-        passthrough = false
         // Accessibility overlays sit above the lock screen, so hide it entirely.
         overlay?.setVisible(false)
-        updateNotification()
     }
 
     private fun resume() {
         val window = overlay ?: return
         if (phase != Phase.PAUSED) return
         phase = Phase.IDLE
-        show(null)
-        // Cover the live screen straight away; the first capture replaces the flash.
-        window.view.showFlash()
+        show(null) // The flash covers the screen until the first capture replaces it.
         window.setVisible(true)
         // Let unlock / dialog-dismiss animations finish before the first capture.
         requestRefresh(RESUME_DELAY_MS)
-        updateNotification()
     }
 
     private fun onGeometryChanged(newGeometry: DisplayGeometry) {
-        val old = geometry
         geometry = newGeometry
-        if (old.width == newGeometry.width && old.height == newGeometry.height &&
-            old.rotation == newGeometry.rotation && old.densityDpi == newGeometry.densityDpi
-        ) {
-            return // Only the refresh rate changed.
-        }
         seq++
         cancelScheduledRefresh()
-        val cap = capturer ?: return
-        cap.idle()
-        cap.resize(newGeometry)
+        capturer?.cancel()
         overlay?.resize(newGeometry)
-        show(null) // The old frame no longer lines up with anything.
+        show(null) // The old frame no longer lines up with anything; flash until the next one.
         if (phase != Phase.PAUSED) {
             phase = Phase.IDLE
-            passthrough = false
-            overlay?.view?.showFlash()
             requestRefresh(ROTATION_DELAY_MS)
         }
     }
@@ -464,7 +337,6 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
                     cancelScheduledRefresh()
                     requestRefresh()
                 }
-                updateNotification()
             }
             PaperSettings.KEY_WARMTH, PaperSettings.KEY_CONTRAST, PaperSettings.KEY_LEVELS -> {
                 capturer?.filterParams = settings.filterParams()
@@ -472,102 +344,17 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
             }
             PaperSettings.KEY_ON_CHANGE -> {
                 refreshOnChange = settings.refreshOnChange
-                if (phase == Phase.IDLE) {
-                    capturer?.idle()
-                    requestRefresh()
-                }
-                updateNotification()
+                requestRefresh()
             }
         }
-    }
-
-    private val projectionCallback = object : MediaProjection.Callback() {
-        // The user revoked capture from system UI, or the system ended it (e.g. on lock).
-        override fun onStop() {
-            stopCapture()
-        }
-    }
-
-    // --- Notification --------------------------------------------------------------------
-
-    private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            getString(R.string.notification_channel),
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = getString(R.string.notification_channel_description)
-            setShowBadge(false)
-        }
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-    }
-
-    private fun startInForeground() {
-        val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-    }
-
-    private fun updateNotification() {
-        if (projection == null) return
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
-    }
-
-    private fun buildNotification(): Notification {
-        val openSettings = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
-        val stop = PendingIntent.getBroadcast(
-            this,
-            1,
-            Intent(this, StopReceiver::class.java),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
-        val text = when {
-            projection != null && phase == Phase.PAUSED -> getString(R.string.notification_paused)
-            refreshOnChange -> getString(R.string.notification_text_on_change, intervalMs)
-            else -> getString(R.string.notification_text, intervalMs)
-        }
-        val stopAction = Notification.Action.Builder(
-            Icon.createWithResource(this, R.drawable.ic_notification),
-            getString(R.string.action_stop),
-            stop,
-        ).build()
-        return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText(text)
-            .setContentIntent(openSettings)
-            .setOngoing(true)
-            .setShowWhen(false)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .addAction(stopAction)
-            .apply {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-                }
-            }
-            .build()
     }
 
     companion object {
-        private const val CHANNEL_ID = "paperscreen"
-        private const val NOTIFICATION_ID = 1
-
         private const val NOT_SCHEDULED = -1L
-        private const val GRAB_TIMEOUT_MS = 250L
         private const val RESUME_DELAY_MS = 300L
         private const val ROTATION_DELAY_MS = 450L
-        private const val WATCH_MARGIN_MS = 100L
-        private const val MAX_WATCH_IGNORE_MS = 1_000L
-        private const val MAX_CLEAR_FRAMES = 3
-        private const val CLEAN_CAPTURES_TO_STEP_DOWN = 20
+        private const val MIN_BACKOFF_MS = 250L
+        private const val MAX_BACKOFF_MS = 1_000L
 
         /** The connected service, if the user has enabled it. Main thread only. */
         private var instance: PaperScreenAccessibilityService? = null
@@ -590,15 +377,14 @@ class PaperScreenAccessibilityService : AccessibilityService(), ScreenCapturer.L
             stateListeners.toList().forEach { it(current) }
         }
 
-        /**
-         * Starts capture with a consent result from MediaProjectionManager. Returns false if
-         * the service isn't enabled or capture couldn't start.
-         */
-        fun startCapture(resultCode: Int, data: Intent): Boolean =
-            instance?.startCapture(resultCode, data) ?: false
+        /** Starts filtering the screen. Returns false if the service isn't enabled or connected. */
+        fun startCapture(): Boolean = instance?.startCapture() ?: false
 
+        /** Stops filtering; it stays off until the user turns it back on. */
         fun stopCapture() {
-            instance?.stopCapture()
+            val service = instance ?: return
+            service.settings.captureEnabled = false
+            service.stopCapture()
         }
     }
 }

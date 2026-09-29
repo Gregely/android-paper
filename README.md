@@ -1,7 +1,7 @@
 # PaperScreen
 
-An Android app that makes an OLED phone feel like an e-ink reader. It captures the screen, runs
-each frame through an e-ink filter, and shows the result as a frozen, touch-transparent overlay
+An Android app that makes an OLED phone feel like an e-ink reader. It rebuilds the screen from
+per-window screenshots, runs each frame through an e-ink filter, and shows the result as a frozen, touch-transparent overlay
 that only updates on a "page turn".
 
 ![The filter at different settings](docs/filter-preview.png)
@@ -12,40 +12,52 @@ warmth 100, 4 grey levels, and contrast 100 with 32 levels.*
 ## How it works
 
 ```
-SettingsActivity ──(capture consent)──▶ PaperScreenAccessibilityService
-                                          (enabled in Accessibility settings;
-                                           mediaProjection foreground service while capturing)
-                                                             │
-          MediaProjection ▶ VirtualDisplay ▶ ImageReader ────┤  ScreenCapturer (worker thread)
-                                                             │    RGBA frame ▶ EinkFilter ▶ Bitmap
-                                                             ▼
-                          OverlayWindow (TYPE_ACCESSIBILITY_OVERLAY, opaque, FLAG_NOT_TOUCHABLE)
+SettingsActivity ──(start / stop)──▶ PaperScreenAccessibilityService
+                                       (enabled in Settings → Accessibility)
+                                                     │
+     getWindows() ▶ takeScreenshotOfWindow() × N ────┤  WindowCapturer (worker thread)
+                                                     │    composite over white ▶ EinkFilter ▶ Bitmap
+                                                     ▼
+                  OverlayWindow (TYPE_ACCESSIBILITY_OVERLAY, opaque, FLAG_NOT_TOUCHABLE)
 ```
 
 The overlay is owned by an accessibility service because `TYPE_ACCESSIBILITY_OVERLAY` is the
 one window type a regular app can draw that is **fully opaque and still passes touches
 through**. Ordinary app overlays are capped at 80% opacity for touch pass-through since
-Android 12, which let the live screen bleed through. The service reads no accessibility
-events and no window content.
+Android 12.
+
+The same service rebuilds the screen underneath from per-window screenshots.
+`AccessibilityService.takeScreenshotOfWindow()` (Android 14+) records one window's own
+layers. Unlike a whole-screen capture, it never includes the overlay, so the overlay stays
+opaque the whole time.
 
 Each refresh is one page turn (`PaperScreenAccessibilityService.beginRefresh`):
 
-1. **Flash.** The overlay turns flat `#C8C8C8`, hiding the old frame.
-2. **Capture.** Near the end of the ~80 ms flash, the overlay goes clear for a **single frame**
-   and is grey again on the next vsync. The capture includes our own overlay, so this blink is
-   the only moment it can see the real screen. `ScreenCapturer` ignores frames that show the
-   flash (recognised by colour, and by comparison with a reference flash frame) and takes the
-   clear one.
-3. **Show.** The frame is filtered on a worker thread and replaces the flash, drawn 1:1 in
-   screen pixels, and stays frozen until the next refresh.
+1. **Flash.** The overlay turns flat `#C8C8C8`.
+2. **Capture, in the background.** `getWindows()` lists the visible windows (accessibility
+   overlays excluded). `WindowCapturer` screenshots them one at a time and composites them
+   bottom-up in layer order over plain white. The wallpaper isn't one of the reported windows,
+   and the filter turns white into the paper colour. The composite is built on the GPU and
+   read back once.
+3. **Show.** The composite is filtered on the worker thread and replaces the flash, no sooner
+   than 80 ms after it started. It is drawn 1:1 in screen pixels and stays frozen until the
+   next refresh.
 
-If a capture is missed (the compositor dropped the clear frame), the blink is lengthened to
-2–3 frames, then stepped back to one after a run of clean captures.
+Window screenshots cover the window's whole surface. The only position the API reports is
+the bounds of the window's touchable region. `WindowPlacement` lines the two up: exact bounds
+when the sizes match, full-screen windows at the origin, edge-anchored windows (status bar,
+keyboard, navigation bar) to their edge, and everything else centred (dialog shadows).
 
-Refreshes run every interval (200–2000 ms, default 500). With **Refresh only when the screen
-changes** turned on (the default), the service watches for new composited frames between
-refreshes and only refreshes once something changes, still at most once per interval. On a
-static page, nothing flickers at all.
+**The 333 ms limit.** The system refuses a second screenshot of the same window within
+333 ms. Different windows can be captured back to back, so windows are captured one at a
+time and each waits out its own interval. In practice the fastest refresh is about every
+340 ms, even with the interval slider set lower.
+
+**Refresh on change.** With **Refresh only when the screen changes** on (the default),
+refreshes are triggered by accessibility events that usually mean something visible changed:
+content or window changes, scrolling, text edits, clicks and notifications. It still refreshes
+at most once per interval. If refreshes keep finding nothing new, change-triggered refreshes
+back off (up to one extra second) so a noisy app can't keep the screen flashing.
 
 ### The filter (`EinkFilter`)
 
@@ -59,22 +71,20 @@ and each pixel costs one table lookup:
 | Contrast | Remaps 0/255 to ink/paper. Contrast 0 → 60/195, **50 (default) → 30/225**, 100 → 0/255 |
 | Warmth | Per-channel tint from cool blue-grey (0) to sepia/amber (100). Default 20 |
 
-A `ColorMatrix` can't express posterization, and AGSL shaders need API 33, so a lookup table is
-the one approach that is exact on API 28+. The settings screen's **Hold to preview** runs the
+A `ColorMatrix` can't express posterization, so the filter uses a lookup table, which is
+exact and cheap on the CPU. The settings screen's **Hold to preview** runs the
 same code over a `PixelCopy` snapshot of its own window.
 
 ### Lifecycle
 
+- **On/off:** the master toggle starts and stops filtering; nothing else is asked for. The
+  choice is remembered, so filtering resumes by itself when the service reconnects (e.g.
+  after a reboot). Turning the accessibility service off also turns filtering off.
 - **Screen off / locked:** capture pauses and the overlay hides (accessibility overlays would
   otherwise cover the lock screen). On unlock (`ACTION_USER_PRESENT`) the overlay comes back
   as the grey flash, and the first capture replaces it.
-- **Rotation / resolution change:** a `DisplayListener` resizes the virtual display, image
-  reader and overlay, shows the flash in place of the stale frame, and refreshes once the
-  rotation animation is done.
-- **Capture revoked** (from system UI, or by the system): `MediaProjection.Callback.onStop`
-  ends the capture session and the toggle in settings turns off. The accessibility service
-  stays enabled but idle.
-- **Notification:** persistent, with a **Stop** action. Tapping it opens settings.
+- **Rotation / resolution change:** a `DisplayListener` resizes the overlay, shows the flash
+  in place of the stale frame, and refreshes once the rotation animation is done.
 
 ## Building
 
@@ -82,22 +92,26 @@ Requirements: JDK 17+ and an Android SDK with platform 34.
 
 ```sh
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest    # EinkFilter unit tests
+./gradlew testDebugUnitTest    # EinkFilter and WindowPlacement unit tests
 ```
 
-- `minSdk` 28, `targetSdk`/`compileSdk` 34, Gradle Kotlin DSL, AGP 8.10, Kotlin 2.1.
+- `minSdk`/`targetSdk`/`compileSdk` 34, Gradle Kotlin DSL, AGP 8.10, Kotlin 2.1.
 - No libraries: the app uses only framework APIs and the Kotlin stdlib (JUnit is test-only).
 
 ## Permissions and setup
 
-| What | Why |
-|---|---|
-| PaperScreen accessibility service | Owns the opaque, touch-transparent overlay. Turned on by the user in **Settings → Accessibility**; the app explains this on first launch and links there. |
-| MediaProjection consent | Screen capture. Asked for each time capture starts. On Android 14+ it is limited to whole-screen capture. |
-| `FOREGROUND_SERVICE_MEDIA_PROJECTION` | Required for capturing on Android 14. |
-| `POST_NOTIFICATIONS` | The status notification and its Stop action (Android 13+). |
+The app declares no runtime permissions. Everything goes through its accessibility service,
+which the user turns on in **Settings → Accessibility**. The app explains this on first
+launch and links there. Its service config asks for:
 
-`SYSTEM_ALERT_WINDOW` is no longer used.
+| Capability | Why |
+|---|---|
+| `canRetrieveWindowContent` + `flagRetrieveInteractiveWindows` | `getWindows()`, to know which windows to capture. Only each window's id, layer and bounds are read, never its view content. |
+| `canTakeScreenshot` | `takeScreenshotOfWindow()` for each of those windows. |
+| A handful of event types | Change detection for "refresh on change". |
+
+Android's settings screen will describe this as the service being able to view and control
+the screen. That wording comes from the window-content capability.
 
 **Sideloaded APKs on Android 13+:** the system treats accessibility services from apps not
 installed through an app store as a "restricted setting", so the switch starts out greyed
@@ -105,24 +119,28 @@ out. Open **App info → PaperScreen → ⋮ → Allow restricted settings**, th
 
 ## Known limitations
 
-These come from the Android platform:
+This is a prototype of per-window capture. These gaps come from what the platform reports:
 
-- **One frame of the live screen per refresh.** The screen capture and the physical display
-  are composited from the same window state at the same moment, so the frame the capture
-  sees unfiltered is also shown on the panel. There is no public API to leave an overlay out
-  of a capture, so this can't be zero. It is a single frame (about 8–17 ms, depending on
-  the refresh rate) between two grey frames of the flash. If the compositor drops that frame, the
-  blink is briefly lengthened to 2–3 frames (see above).
-- **Everything is filtered, including system UI.** Accessibility overlays sit above the
-  status bar, notification shade and keyboard, so those also appear filtered and frozen,
-  updating on each refresh. Touches still go straight through to them.
-- **Secure content** (`FLAG_SECURE`: banking apps, DRM video) captures as black. When the
-  middle of a capture is pure black, the overlay goes clear so those apps remain usable,
-  unfiltered. The next refresh captures without a flash first, since nothing is hidden.
-- In on-change mode, a change that starts and finishes within about 150 ms after a refresh
-  can be missed until the next change. Frames from our own redraw are ignored during that
-  window. Status-bar clock updates will always pick it up.
-- Some newer Android versions end screen capture when the device locks. PaperScreen then
-  stops capturing, and needs turning back on (a new capture consent).
+- **Secure windows are black.** `FLAG_SECURE` windows (banking apps, DRM video) can't be
+  captured, and their bounds are filled black. Because the overlay is opaque, **the app
+  underneath can't be seen at all**, though taps still reach it. Turn PaperScreen off to use
+  such apps.
+- **Only reported windows appear.** `getWindows()` leaves out the wallpaper (replaced by
+  plain paper), non-touchable windows such as toasts and the gesture-navigation handle, and
+  windows completely covered by others. When a modal dialog is open, the app behind it may be
+  left out, so the dialog appears over plain paper. Dialog dimming and blur-behind aren't
+  windows, so they're missing too.
+- **Placement is inferred.** See `WindowPlacement` above. A window whose surface extends
+  beyond its touchable area in an unusual, asymmetric way can end up slightly offset.
+- **A capture waits on each app's UI thread.** Each window screenshot is taken by the app that
+  owns the window, on its UI thread. A busy app delays the refresh (up to a 500 ms timeout per
+  window, after which that window is drawn black).
+- **About 340 ms minimum refresh** (see above).
+- **Refresh on change depends on accessibility events.** Content that changes without
+  reporting it (video, games, custom-drawn animations) only updates on the next event, e.g.
+  a tap. Turn "refresh on change" off to refresh on every interval.
+- **Everything is filtered, including system UI.** The status bar, notification shade and
+  keyboard sit under the overlay, so they appear filtered and frozen, updating on each
+  refresh. Touches still go straight through to them.
 - Google Play restricts accessibility-service use to apps that meet its accessibility API
   policy. This matters only if you publish there.

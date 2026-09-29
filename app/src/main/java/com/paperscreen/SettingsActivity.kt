@@ -1,15 +1,10 @@
 package com.paperscreen
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.media.projection.MediaProjectionConfig
-import android.media.projection.MediaProjectionManager
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.MotionEvent
@@ -107,7 +102,7 @@ class SettingsActivity : Activity() {
         outState.putBoolean(STATE_START_PENDING, startAfterServiceEnabled)
     }
 
-    // --- Start flow: accessibility service → notification permission → capture consent ----
+    // --- Start flow: accessibility service → start -------------------------------------
 
     private fun beginStart() {
         if (PaperScreenAccessibilityService.state == PaperScreenAccessibilityService.State.RUNNING) return
@@ -117,54 +112,15 @@ class SettingsActivity : Activity() {
             render()
             return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            // Capture runs either way; this only makes its stop toggle visible.
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
-            return
-        }
-        requestCapture()
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_NOTIFICATIONS) requestCapture()
-    }
-
-    private fun requestCapture() {
-        val manager = getSystemService(MediaProjectionManager::class.java)
-        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            // Whole-screen only: a single-app capture wouldn't match what's under the overlay.
-            manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
-        } else {
-            manager.createScreenCaptureIntent()
-        }
-        @Suppress("DEPRECATION")
-        startActivityForResult(intent, REQUEST_CAPTURE)
-    }
-
-    @Deprecated("Framework Activity result API; this app avoids AndroidX.")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        @Suppress("DEPRECATION")
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_CAPTURE) return
-        if (resultCode == RESULT_OK && data != null) {
-            if (!PaperScreenAccessibilityService.startCapture(resultCode, data)) {
-                Toast.makeText(this, R.string.start_failed, Toast.LENGTH_LONG).show()
-            }
-        } else {
-            Toast.makeText(this, R.string.capture_denied, Toast.LENGTH_LONG).show()
+        if (!PaperScreenAccessibilityService.startCapture()) {
+            Toast.makeText(this, R.string.start_failed, Toast.LENGTH_LONG).show()
         }
         render()
     }
 
     private fun showServiceDialog() {
-        var message = getString(R.string.service_dialog_message)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Sideloaded apps can't enable accessibility services until this is allowed.
-            message += getString(R.string.service_dialog_restricted)
-        }
+        // Sideloaded apps can't enable accessibility services until restricted settings are allowed.
+        val message = getString(R.string.service_dialog_message) + getString(R.string.service_dialog_restricted)
         AlertDialog.Builder(this)
             .setTitle(R.string.service_dialog_title)
             .setMessage(message)
@@ -300,8 +256,6 @@ class SettingsActivity : Activity() {
     }
 
     companion object {
-        private const val REQUEST_CAPTURE = 1
-        private const val REQUEST_NOTIFICATIONS = 2
         private const val STATE_START_PENDING = "start_pending"
         private const val EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
         private const val EXTRA_SHOW_FRAGMENT_ARGS = ":settings:show_fragment_args"

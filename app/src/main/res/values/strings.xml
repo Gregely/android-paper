@@ -25,21 +25,13 @@
     <string name="preview_hint">Applies the current filter to this screen while held.</string>
 
     <string name="service_dialog_title">Turn on the PaperScreen service</string>
-    <string name="service_dialog_message">PaperScreen draws its filtered screen as an accessibility overlay. That\'s the only kind of overlay Android lets be fully opaque while your taps still reach the apps underneath. PaperScreen doesn\'t read anything on your screen through this service.\n\nOn the next screen, open Installed apps (or Downloaded apps), choose PaperScreen, and turn it on. Then come back here.</string>
+    <string name="service_dialog_message">PaperScreen draws its filtered screen as an accessibility overlay. That\'s the only kind of overlay Android lets be fully opaque while your taps still reach the apps underneath. The same service captures each window underneath the overlay, so the overlay never has to get out of the way. Captures stay on your phone.\n\nOn the next screen, open Installed apps (or Downloaded apps), choose PaperScreen, and turn it on. Then come back here.</string>
     <string name="service_dialog_restricted">\n\nIf the switch is greyed out as a \"restricted setting\", open App info for PaperScreen, tap ⋮ in the top corner, choose \"Allow restricted settings\", and try again.</string>
     <string name="open_settings">Open settings</string>
     <string name="not_now">Not now</string>
-    <string name="capture_denied">Screen capture permission is needed to run PaperScreen.</string>
-    <string name="start_failed">Couldn\'t start PaperScreen. Make sure its accessibility service is still on, then try again.</string>
+    <string name="start_failed">Couldn\'t start PaperScreen. Make sure its accessibility service is on, then try again.</string>
 
     <string name="accessibility_summary">Shows your screen in e-ink style</string>
-    <string name="accessibility_description">PaperScreen redraws your screen in the style of an e-ink display, with a paper-like grey page turn on each refresh. It uses this service only to draw a full-screen overlay that your taps pass through. It doesn\'t read or change anything on your screen through this service. Screen capture is asked for separately, each time you turn PaperScreen on.</string>
+    <string name="accessibility_description">PaperScreen redraws your screen in the style of an e-ink display, with a paper-like grey page turn on each refresh. It uses this service to draw a full-screen overlay that your taps pass through, and to take a screenshot of each window underneath it, which it filters and shows on the overlay. It reads the window list only to know what to capture, and doesn\'t read or change anything inside apps. Captures stay on your phone.</string>
 
-    <string name="notification_channel">PaperScreen status</string>
-    <string name="notification_channel_description">Shown while PaperScreen is filtering your screen.</string>
-    <string name="notification_title">PaperScreen is on</string>
-    <string name="notification_text">Every %1$d ms · tap to adjust</string>
-    <string name="notification_text_on_change">Refreshes on change, at most every %1$d ms · tap to adjust</string>
-    <string name="notification_paused">Paused while the screen is off or locked</string>
-    <string name="action_stop">Stop</string>
 </resources>

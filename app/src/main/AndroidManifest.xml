@@ -1,12 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
     <application
-        android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher"
@@ -24,14 +19,12 @@
         </activity>
 
         <!--
-          Owns the capture pipeline and its TYPE_ACCESSIBILITY_OVERLAY window. Only the system
-          can bind it (BIND_ACCESSIBILITY_SERVICE); it runs as a mediaProjection foreground
-          service while capturing.
+          Owns the per-window capture pipeline and its TYPE_ACCESSIBILITY_OVERLAY window.
+          Only the system can bind it (BIND_ACCESSIBILITY_SERVICE).
         -->
         <service
             android:name=".PaperScreenAccessibilityService"
             android:exported="true"
-            android:foregroundServiceType="mediaProjection"
             android:label="@string/app_name"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
@@ -42,10 +35,6 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
-
-        <receiver
-            android:name=".StopReceiver"
-            android:exported="false" />
 
     </application>
 </manifest>
